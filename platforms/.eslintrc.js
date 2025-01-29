@@ -8,7 +8,6 @@ module.exports = {
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
     "plugin:@typescript-eslint/recommended-requiring-type-checking",
-    "plugin:prettier/recommended",
     "plugin:jest/recommended",
     "plugin:react/recommended",
     "prettier",
@@ -35,6 +34,9 @@ module.exports = {
     "@typescript-eslint/no-misused-promises": 1,
     "@typescript-eslint/no-floating-promises": 1,
     "@typescript-eslint/no-unsafe-assignment": "warn",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "jest/no-alias-methods": "warn",
+    "@typescript-eslint/no-redundant-type-constituents": "warn",
   },
   settings: {
     "import/resolver": {

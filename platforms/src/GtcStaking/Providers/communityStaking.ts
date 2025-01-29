@@ -1,202 +1,174 @@
-// ----- Types
-import type { Provider, ProviderOptions } from "../../types";
-import type { RequestPayload, VerifiedPayload } from "@gitcoin/passport-types";
+import { RequestPayload, VerifiedPayload } from "@gitcoin/passport-types";
+import BigNumber from "bignumber.js";
+import { GtcStakingContext, GtcStakingProvider, GtcStakingProviderOptions, Stake, StakeV2 } from "./GtcStaking";
 
-// ----- Ethers library
-import { utils } from "ethers";
+class CommunityStakingBaseProvider extends GtcStakingProvider {
+  minimumCountCommunityStakes: number;
 
-// ----- Libs
-import axios from "axios";
+  constructor(options: GtcStakingProviderOptions & { minimumCountCommunityStakes: number }) {
+    super(options);
+    this.minimumCountCommunityStakes = options.minimumCountCommunityStakes;
+  }
 
-// List of subgraphs to check
-export const stakingSubgraph = `https://gateway.thegraph.com/api/${process.env.GTC_STAKING_GRAPH_API_KEY}/subgraphs/id/6neBRm8wdXfbH9WQuFeizJRpsom4qovuqKhswPBRTC5Q`;
+  async verify(payload: RequestPayload, context: GtcStakingContext): Promise<VerifiedPayload> {
+    const address = this.getAddress(payload);
+    const stakeData = await this.getStakes(payload, context);
+    const communityStakes = stakeData.communityStakes;
+    const communityStakesV2 = stakeData.communityStakesV2;
 
-type StakeResponse = {
-  totalAmountStaked?: number;
-  address?: string;
-};
+    const countRelevantStakes = this.getCountRelevantStakes(communityStakes, address) || 0;
+    const countRelevantStakesV2 = this.getCountRelevantStakesV2(communityStakesV2, address) || 0;
+    const totalCountRelevantStakes = countRelevantStakes + countRelevantStakesV2;
+    if (totalCountRelevantStakes >= this.minimumCountCommunityStakes) {
+      return {
+        valid: true,
+        record: { address },
+      };
+    } else {
+      return {
+        valid: false,
+        errors: [
+          `There are currently ${totalCountRelevantStakes} community stakes of at least ${this.thresholdAmount.toString()} GTC on/by your address, ` +
+            `you need a minimum of ${this.minimumCountCommunityStakes} relevant community stakes to claim this stamp`,
+        ],
+      };
+    }
+  }
 
-// Defining interfaces for the data structure returned by the subgraph
-interface Round {
-  id: string;
-}
+  getCountRelevantStakes(communityStakes: Stake[], address: string): number {
+    const stakesOnAddressByOthers: Record<string, BigNumber> = {};
+    const stakesByAddressOnOthers: Record<string, BigNumber> = {};
 
-interface XStake {
-  round: Round;
-  total: string;
-}
+    for (let i = 0; i < communityStakes.length; i++) {
+      const stake = communityStakes[i];
+      const stakeAmount = new BigNumber(stake.amount);
 
-interface XStakeArray {
-  xstakeAggregates: Array<XStake>;
-}
-
-interface UsersArray {
-  address: string;
-  users: Array<XStakeArray>;
-}
-
-interface StakeData {
-  data: UsersArray;
-}
-
-export interface DataResult {
-  data: StakeData;
-}
-
-async function verifyStake(payload: RequestPayload): Promise<StakeResponse> {
-  const round = process.env.GTC_STAKING_ROUND || "1";
-  const address = payload.address.toLowerCase();
-  const result = await axios.post(stakingSubgraph, {
-    query: `
-    {
-      users(where: {address: "${address}"}) {
-        address,
-        xstakeAggregates(where: {round: "${round}", total_gt: 0}) {
-          total
-          round {
-            id
-          }
+      if (stake.staker === address && stake.address !== address) {
+        stakesByAddressOnOthers[stake.address] ||= new BigNumber(0);
+        if (stake.staked) {
+          stakesByAddressOnOthers[stake.address] = stakesByAddressOnOthers[stake.address].plus(stakeAmount);
+        } else {
+          stakesByAddressOnOthers[stake.address] = stakesByAddressOnOthers[stake.address].sub(stakeAmount);
+        }
+      } else if (stake.address === address && stake.staker !== address) {
+        stakesOnAddressByOthers[stake.staker] ||= new BigNumber(0);
+        if (stake.staked) {
+          stakesOnAddressByOthers[stake.staker] = stakesOnAddressByOthers[stake.staker].plus(stakeAmount);
+        } else {
+          stakesOnAddressByOthers[stake.staker] = stakesOnAddressByOthers[stake.staker].sub(stakeAmount);
         }
       }
     }
-      `,
-  });
 
-  const r = result as DataResult;
-
-  const response: StakeResponse = {
-    address: address,
-    totalAmountStaked: 0,
-  };
-  // Array of community stakes on the user
-  const xstake = r?.data?.data?.users[0]?.xstakeAggregates[0]?.total;
-  if (!xstake) {
-    return response;
-  }
-  const stakeAmountFormatted: string = utils.formatUnits(xstake, 18);
-  return {
-    totalAmountStaked: parseFloat(stakeAmountFormatted),
-    address: address,
-  };
-}
-
-// Export a Community Staking Bronze Stamp provider
-// User's community stake must be greater than or equal to 1 GTC
-export class CommunityStakingBronzeProvider implements Provider {
-  // Give the provider a type so that we can select it with a payload
-  type = "CommunityStakingBronze";
-  // Options can be set here and/or via the constructor
-  _options = {};
-
-  // construct the provider instance with supplied options
-  constructor(options: ProviderOptions = {}) {
-    this._options = { ...this._options, ...options };
+    return [...Object.entries(stakesByAddressOnOthers), ...Object.entries(stakesOnAddressByOthers)].reduce(
+      (count, [_address, amount]) => {
+        if (amount.gte(this.thresholdAmount)) {
+          return count + 1;
+        }
+        return count;
+      },
+      0
+    );
   }
 
-  // verify that the proof object contains valid === "true"
-  async verify(payload: RequestPayload): Promise<VerifiedPayload> {
-    let valid = false;
-    try {
-      const stakeData = await verifyStake(payload);
-      const stakeAmount = stakeData.totalAmountStaked;
-      valid = stakeAmount >= 1.0;
+  getCountRelevantStakesV2(communityStakes: StakeV2[], address: string): number {
+    const stakesOnAddressByOthers: Record<string, BigNumber> = {};
+    const stakesByAddressOnOthers: Record<string, BigNumber> = {};
 
-      return {
-        valid,
-        record: valid
-          ? {
-              address: stakeData.address,
-              // csgte1 = Community staking greater than or equal to 1
-              stakeAmount: "csgte1",
-            }
-          : {},
-      };
-    } catch (e) {
-      return {
-        valid: false,
-        error: ["Community Staking Bronze Provider verifyStake Error"],
-      };
-    }
+    communityStakes.forEach((stake) => {
+      // if stake is not expired
+      if (new Date(stake.unlock_time) > new Date()) {
+        if (stake.staker === address && stake.stakee !== address) {
+          stakesByAddressOnOthers[stake.stakee] = new BigNumber(stake.amount);
+        }
+        if (stake.staker !== address && stake.stakee === address) {
+          stakesOnAddressByOthers[stake.staker] = new BigNumber(stake.amount);
+        }
+      }
+    });
+
+    return [...Object.entries(stakesByAddressOnOthers), ...Object.entries(stakesOnAddressByOthers)].reduce(
+      (count, [_address, amount]) => {
+        if (amount.gte(this.thresholdAmount)) {
+          return count + 1;
+        }
+        return count;
+      },
+      0
+    );
   }
 }
 
-// Export a Community Staking Silver Stamp provider
-// User's community stake must be greater than or equal to 10 GTC
-export class CommunityStakingSilverProvider implements Provider {
-  // Give the provider a type so that we can select it with a payload
-  type = "CommunityStakingSilver";
-  // Options can be set here and/or via the constructor
-  _options = {};
-
-  // construct the provider instance with supplied options
-  constructor(options: ProviderOptions = {}) {
-    this._options = { ...this._options, ...options };
-  }
-
-  // verify that the proof object contains valid === "true"
-  async verify(payload: RequestPayload): Promise<VerifiedPayload> {
-    let valid = false;
-    try {
-      const stakeData = await verifyStake(payload);
-      const stakeAmount = stakeData.totalAmountStaked;
-
-      valid = stakeAmount >= 10.0;
-
-      return {
-        valid,
-        record: valid
-          ? {
-              address: stakeData.address,
-              // csgte10 = Community staking greater or equal than 10
-              stakeAmount: "csgte10",
-            }
-          : {},
-      };
-    } catch (e) {
-      return {
-        valid: false,
-        error: ["Community Staking Silver Provider verifyStake Error"],
-      };
-    }
+export class BeginnerCommunityStakerProvider extends CommunityStakingBaseProvider {
+  constructor() {
+    super({
+      type: "BeginnerCommunityStaker",
+      thresholdAmount: new BigNumber(5),
+      minimumCountCommunityStakes: 1,
+    });
   }
 }
 
-// Export a Community Staking Bronze Stamp provider
-// User's community stake must be greater than or equal to 100 GTC
-export class CommunityStakingGoldProvider implements Provider {
-  // Give the provider a type so that we can select it with a payload
-  type = "CommunityStakingGold";
-  // Options can be set here and/or via the constructor
-  _options = {};
+export class ExperiencedCommunityStakerProvider extends CommunityStakingBaseProvider {
+  constructor() {
+    super({
+      type: "ExperiencedCommunityStaker",
+      thresholdAmount: new BigNumber(10),
+      minimumCountCommunityStakes: 2,
+    });
+  }
+}
 
-  // construct the provider instance with supplied options
-  constructor(options: ProviderOptions = {}) {
-    this._options = { ...this._options, ...options };
+export class TrustedCitizenProvider extends CommunityStakingBaseProvider {
+  constructor() {
+    super({
+      type: "TrustedCitizen",
+      thresholdAmount: new BigNumber(20),
+      minimumCountCommunityStakes: 5,
+    });
   }
 
-  // verify that the proof object contains valid === "true"
-  async verify(payload: RequestPayload): Promise<VerifiedPayload> {
-    let valid = false;
-    try {
-      const stakeData = await verifyStake(payload);
-      const stakeAmount = stakeData.totalAmountStaked;
-      valid = stakeAmount >= 100.0;
+  getCountRelevantStakes(communityStakes: Stake[], address: string): number {
+    const stakesOnAddressByOthers: Record<string, BigNumber> = {};
 
-      return {
-        valid: valid,
-        record: valid
-          ? {
-              address: stakeData.address,
-              // csgt100 = Community staking greater than or equal to 100
-              stakeAmount: "csgte100",
-            }
-          : {},
-      };
-    } catch (e) {
-      return {
-        valid: false,
-        error: ["Community Staking Gold Provider verifyStake Error"],
-      };
+    for (let i = 0; i < communityStakes.length; i++) {
+      const stake = communityStakes[i];
+      const stakeAmount = new BigNumber(stake.amount);
+
+      if (stake.staker !== address && stake.address === address) {
+        stakesOnAddressByOthers[stake.staker] ||= new BigNumber(0);
+        if (stake.staked) {
+          stakesOnAddressByOthers[stake.staker] = stakesOnAddressByOthers[stake.staker].plus(stakeAmount);
+        } else {
+          stakesOnAddressByOthers[stake.staker] = stakesOnAddressByOthers[stake.staker].sub(stakeAmount);
+        }
+      }
     }
+
+    return Object.entries(stakesOnAddressByOthers).reduce((count, [_address, amount]) => {
+      if (amount.gte(this.thresholdAmount)) {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+  }
+
+  getCountRelevantStakesV2(communityStakes: StakeV2[], address: string): number {
+    const stakesOnAddressByOthers: Record<string, BigNumber> = {};
+    communityStakes.forEach((stake) => {
+      // if stake is not expired
+      if (new Date(stake.unlock_time) > new Date()) {
+        if (stake.staker !== address && stake.stakee === address) {
+          stakesOnAddressByOthers[stake.staker] = new BigNumber(stake.amount);
+        }
+      }
+    });
+
+    return Object.entries(stakesOnAddressByOthers).reduce((count, [_address, amount]) => {
+      if (amount.gte(this.thresholdAmount)) {
+        return count + 1;
+      }
+      return count;
+    }, 0);
   }
 }

@@ -1,97 +1,103 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-// --- React Methods
-import React, { useCallback, useContext, useState } from "react";
-import axios from "axios";
-import { ethers } from "ethers";
+import { Spinner } from "@chakra-ui/react";
+import { OnChainStatus } from "../utils/onChainStatus";
+import Tooltip from "../components/Tooltip";
+import { Chain } from "../utils/chains";
+import { useSyncToChainButton } from "../hooks/useSyncToChainButton";
+import { useCallback, useContext, useState } from "react";
+import { ScorerContext } from "../context/scorerContext";
+import { LowScoreAlertModal } from "./LowScoreAlertModal";
+import { atom, useAtom } from "jotai";
+import { datadogLogs } from "@datadog/browser-logs";
 
-// --Chakra UI Elements
-import { Spinner, useToast } from "@chakra-ui/react";
+export function getButtonMsg(onChainStatus: OnChainStatus): string {
+  switch (onChainStatus) {
+    case OnChainStatus.NOT_MOVED:
+      return "Mint";
+    case OnChainStatus.MOVED_OUT_OF_DATE:
+    case OnChainStatus.MOVED_EXPIRED:
+      return "Update";
+    case OnChainStatus.MOVED_UP_TO_DATE:
+      return "Minted";
+    case OnChainStatus.LOADING:
+      return "Loading";
+  }
+}
 
-import GitcoinAttester from "../contracts/GitcoinAttester.json";
-
-import { CeramicContext } from "../context/ceramicContext";
-import { UserContext } from "../context/userContext";
-
-import { VerifiableCredential } from "@gitcoin/passport-types";
-
-const SyncToChainButton = () => {
-  const { passport } = useContext(CeramicContext);
-  const { wallet } = useContext(UserContext);
-  const [syncingToChain, setSyncingToChain] = useState(false);
-  const toast = useToast();
-
-  const onSyncToChain = useCallback(async (wallet, passport) => {
-    if (passport && wallet) {
-      try {
-        setSyncingToChain(true);
-        const credentials = passport.stamps.map(({ credential }: { credential: VerifiableCredential }) => credential);
-
-        const { data } = await axios.post(`${process.env.NEXT_PUBLIC_PASSPORT_IAM_URL}v0.0.0/eas`, credentials);
-
-        if (data.error) console.log("error syncing credentials to chain: ", data.error, "credentials: ", credentials);
-        if (data.invalidCredentials.length > 0)
-          console.log("not syncing invalid credentials: ", data.invalidCredentials);
-        // TODO info toast for invalid credentials
-
-        if (data.passport) {
-          const ethersProvider = new ethers.BrowserProvider(wallet.provider, "any");
-          const gitcoinAttesterContract = new ethers.Contract(
-            process.env.NEXT_PUBLIC_GITCOIN_ATTESTER_CONTRACT_ADDRESS as string,
-            GitcoinAttester.abi,
-            await ethersProvider.getSigner()
-          );
-          const { v, r, s } = data.signature;
-
-          const transaction = await gitcoinAttesterContract.addPassportWithSignature(
-            process.env.NEXT_PUBLIC_GITCOIN_VC_SCHEMA_UUID as string,
-            data.passport,
-            v,
-            r,
-            s
-          );
-          toast({
-            title: "Submitted",
-            description: "Passport submitted to chain",
-            status: "info",
-            duration: 5000,
-            isClosable: true,
-          });
-          await transaction.wait();
-          toast({
-            title: "Success",
-            description: "Passport successfully synced to chain",
-            status: "success",
-            duration: 9000,
-            isClosable: true,
-          });
-        }
-      } catch (e) {
-        console.error("Error syncing credentials to chain: ", e);
-        toast({
-          title: "Error",
-          description: "Failed to sync passport to chain",
-          status: "error",
-          duration: 9000,
-          isClosable: true,
-        });
-      } finally {
-        setSyncingToChain(false);
-      }
-    }
-  }, []);
-
-  return (
-    <button
-      className="h-10 w-10 rounded-md border border-muted"
-      onClick={() => onSyncToChain(wallet, passport)}
-      disabled={syncingToChain}
-    >
-      <div className={`${syncingToChain ? "block" : "hidden"} relative top-1`}>
-        <Spinner thickness="2px" speed="0.65s" emptyColor="darkGray" color="gray" size="md" />
-      </div>
-      <div className={`${syncingToChain ? "hidden" : "block"}`}>{`⛓`}</div>
-    </button>
-  );
+export type SyncToChainProps = {
+  onChainStatus: OnChainStatus;
+  chain: Chain;
+  className?: string;
+  isLoading: boolean;
 };
 
-export default SyncToChainButton;
+const userHasApprovedLowScoreMintAtom = atom<boolean>(false);
+
+export function SyncToChainButton({ onChainStatus, chain, className, isLoading }: SyncToChainProps): JSX.Element {
+  const [userHasApprovedLowScoreMint, setUserHasApprovedLowScoreMint] = useAtom(userHasApprovedLowScoreMintAtom);
+  const { rawScore, threshold, scoreState } = useContext(ScorerContext);
+  const [showLowScoreAlert, setShowLowScoreAlert] = useState(false);
+  const { props, syncingToChain, needToSwitchChain, text } = useSyncToChainButton({
+    chain,
+    onChainStatus,
+    getButtonMsg,
+  });
+
+  const { onClick, ...rest } = props;
+
+  const onSyncButtonClick = useCallback(() => {
+    if (rawScore < threshold && !userHasApprovedLowScoreMint) {
+      setShowLowScoreAlert(true);
+    } else {
+      onClick();
+    }
+  }, [rawScore, threshold, onClick, userHasApprovedLowScoreMint]);
+
+  const onCancelLowScoreAlert = useCallback(() => {
+    datadogLogs.logger.info("User cancelled mint with low score");
+    setShowLowScoreAlert(false);
+  }, []);
+
+  const onProceedLowScoreAlert = useCallback(() => {
+    datadogLogs.logger.info("User approved mint with low score");
+    setUserHasApprovedLowScoreMint(true);
+    setShowLowScoreAlert(false);
+    onClick();
+  }, [onClick, setUserHasApprovedLowScoreMint]);
+
+  const loading =
+    isLoading ||
+    showLowScoreAlert ||
+    syncingToChain ||
+    onChainStatus === OnChainStatus.LOADING ||
+    (scoreState !== "DONE" && scoreState !== "ERROR");
+  const expired = onChainStatus === OnChainStatus.MOVED_EXPIRED;
+
+  return (
+    <>
+      <button
+        onClick={onSyncButtonClick}
+        {...rest}
+        className={`center w-[98px] flex justify-center items-center p-2 ${className} ${props.className} h-11 rounded ${expired ? "bg-focus" : "disabled:bg-foreground-3 bg-foreground-2"}`}
+        data-testid="sync-to-chain-button"
+      >
+        <div className={`${loading ? "block" : "hidden"} relative top-1`}>
+          <Spinner thickness="2px" speed="0.65s" emptyColor="darkGray" color="gray" size="md" />
+        </div>
+        {needToSwitchChain && (
+          <Tooltip className="px-0" iconClassName="text-color-4">
+            You will be prompted to switch to {chain.label} and sign the transaction
+          </Tooltip>
+        )}
+        <span className={`mx-1 translate-y-[1px] font-alt font-medium ${loading ? "hidden" : "block"} text-color-4`}>
+          {text}
+        </span>
+      </button>
+      <LowScoreAlertModal
+        isOpen={showLowScoreAlert}
+        onProceed={onProceedLowScoreAlert}
+        onCancel={onCancelLowScoreAlert}
+        threshold={threshold}
+      />
+    </>
+  );
+}

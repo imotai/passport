@@ -1,32 +1,28 @@
 import React from "react";
+import { LoadButton, LoadingButtonProps } from "./LoadButton";
 
-const SIWEButton = ({
-  className,
-  login,
-  testId,
-  disabled,
-}: {
-  className?: string;
-  login: () => void;
-  testId?: string;
-  disabled?: boolean;
-}) => {
+const SIWEButton = (props: LoadingButtonProps & { enableEthBranding: boolean; subtext?: string }) => {
+  const { enableEthBranding, isLoading, subtext, ...rest } = props;
   return (
-    <button
-      data-testid={testId}
-      className={`rounded bg-accent px-4 py-3 text-white disabled:cursor-not-allowed disabled:bg-muted disabled:text-black ${className}`}
-      onClick={login}
-      disabled={disabled}
-    >
-      <div className="flex items-center justify-center">
-        <img
-          src="/assets/ethLogo.svg"
-          alt="Ethereum Logo"
-          className={`mr-3 inline h-auto w-4 ${disabled ? "invert" : ""}`}
-        />
-        <span className="inline">{disabled ? "Loading..." : "Sign-in with Ethereum"}</span>
+    <LoadButton {...rest} className={(props.className || "") + " rounded-sm"}>
+      {enableEthBranding && !isLoading && (
+        <svg className="my-1" width="19" height="30" viewBox="0 0 19 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9.22009 22.4887V30.0001L18.4402 17.0493L9.22009 22.4887Z" fill="#2F3030" />
+          <path d="M9.22009 11.1099V20.751L18.4402 15.2972L9.22009 11.1099Z" fill="black" />
+          <path d="M9.22009 0V11.1098L18.4402 15.2971L9.22009 0Z" fill="#2F3030" />
+          <path d="M9.22009 22.4887V30.0001L0 17.0493L9.22009 22.4887Z" fill="#828384" />
+          <path d="M9.22009 11.1099V20.751L0 15.2972L9.22009 11.1099Z" fill="#343535" />
+          <path d="M9.22009 0V11.1098L0 15.2971L9.22009 0Z" fill="#828384" />
+        </svg>
+      )}
+      <div className="flex flex-col items-center">
+        <span className="hidden group-disabled:inline">Logging in...</span>
+        <span className="inline group-disabled:hidden">
+          Sign in {enableEthBranding ? "with Ethereum" : "using signature"}
+        </span>
+        <div className={`text-xs ${subtext ? "block" : "hidden"}`}>({subtext})</div>
       </div>
-    </button>
+    </LoadButton>
   );
 };
 

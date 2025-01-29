@@ -1,10 +1,17 @@
+import React from "react";
 import { PlatformOptions } from "../types";
 import { Platform } from "../utils/platform";
+
 export class GithubPlatform extends Platform {
   platformId = "Github";
   path = "github";
   clientId: string = null;
   redirectUri: string = null;
+
+  banner = {
+    content:
+      "Contribution Activity credentials focus on commit days. Ensure your contribution history is public by going to Settings > Public Profile > Contributions & Activity and unchecking 'Make profile private and hide activity'.",
+  };
 
   constructor(options: PlatformOptions = {}) {
     super();

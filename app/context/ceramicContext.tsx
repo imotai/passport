@@ -1,47 +1,32 @@
-import { createContext, useContext, useEffect, useMemo, useState, useRef } from "react";
+import { createContext, useContext, useEffect, useState, useRef, useMemo, useCallback } from "react";
 import {
+  ComposeDBMetadataRequest,
+  ComposeDBSaveStatus,
   Passport,
   PassportLoadResponse,
   PassportLoadStatus,
   PLATFORM_ID,
   PROVIDER_ID,
+  SecondaryStorageBulkPatchResponse,
   Stamp,
+  StampPatch,
 } from "@gitcoin/passport-types";
-import { ProviderSpec, STAMP_PROVIDERS } from "../config/providers";
-import { CeramicDatabase, PassportDatabase } from "@gitcoin/passport-database-client";
-import { useViewerConnection } from "@self.id/framework";
+import { DataStorageBase, ComposeDatabase, PassportDatabase } from "@gitcoin/passport-database-client";
 import { datadogLogs } from "@datadog/browser-logs";
 import { datadogRum } from "@datadog/browser-rum";
-import { UserContext } from "./userContext";
 import { ScorerContext } from "./scorerContext";
-import {
-  Twitter,
-  Ens,
-  Lens,
-  Github,
-  Gitcoin,
-  Facebook,
-  Poh,
-  GitPOAP,
-  NFT,
-  GnosisSafe,
-  Snapshot,
-  POAP,
-  ETH,
-  ZkSync,
-  Discord,
-  Linkedin,
-  GTC,
-  GtcStaking,
-  Google,
-  Brightid,
-  Coinbase,
-  GuildXYZ,
-} from "@gitcoin/passport-platforms";
+
+import { PlatformGroupSpec, ProviderSpec, platforms as stampPlatforms } from "@gitcoin/passport-platforms";
 import { PlatformProps } from "../components/GenericPlatform";
 
+import { CERAMIC_CACHE_ENDPOINT, IAM_VALID_ISSUER_DIDS } from "../config/stamp_config";
+import { useDatastoreConnectionContext } from "./datastoreConnectionContext";
+import { useCustomization } from "../hooks/useCustomization";
+import { useMessage } from "../hooks/useMessage";
+import { usePlatforms } from "../hooks/usePlatforms";
+import { useAccount } from "wagmi";
+
 // -- Trusted IAM servers DID
-const IAM_ISSUER_DID = process.env.NEXT_PUBLIC_PASSPORT_IAM_ISSUER_DID || "";
 const CACAO_ERROR_STATUSES: PassportLoadStatus[] = ["PassportCacaoError", "StampCacaoError"];
 
 export interface CeramicContextState {
@@ -51,458 +36,170 @@ export interface CeramicContextState {
   allPlatforms: Map<PLATFORM_ID, PlatformProps>;
   handleCreatePassport: () => Promise<void>;
   handleAddStamps: (stamps: Stamp[]) => Promise<void>;
+  handlePatchStamps: (stamps: StampPatch[]) => Promise<void>;
   handleDeleteStamps: (providerIds: PROVIDER_ID[]) => Promise<void>;
-  handleCheckRefreshPassport: () => Promise<boolean>;
   cancelCeramicConnection: () => void;
+  handleComposeRetry: () => Promise<SecondaryStorageBulkPatchResponse | void>;
   userDid: string | undefined;
   expiredProviders: PROVIDER_ID[];
+  expiredPlatforms: Partial<Record<PLATFORM_ID, PlatformProps>>;
   passportHasCacaoError: boolean;
   passportLoadResponse?: PassportLoadResponse;
-}
-
-export const platforms = new Map<PLATFORM_ID, PlatformProps>();
-platforms.set("Twitter", {
-  platform: new Twitter.TwitterPlatform(),
-  platFormGroupSpec: Twitter.TwitterProviderConfig,
-});
-
-platforms.set("GitPOAP", {
-  platform: new GitPOAP.GitPOAPPlatform(),
-  platFormGroupSpec: GitPOAP.GitPOAPProviderConfig,
-});
-
-platforms.set("Ens", {
-  platform: new Ens.EnsPlatform(),
-  platFormGroupSpec: Ens.EnsProviderConfig,
-});
-
-platforms.set("NFT", {
-  platform: new NFT.NFTPlatform(),
-  platFormGroupSpec: NFT.NFTProviderConfig,
-});
-
-platforms.set("Facebook", {
-  platFormGroupSpec: Facebook.FacebookProviderConfig,
-  platform: new Facebook.FacebookPlatform(),
-});
-
-platforms.set("Github", {
-  platform: new Github.GithubPlatform({
-    clientId: process.env.NEXT_PUBLIC_PASSPORT_GITHUB_CLIENT_ID,
-    redirectUri: process.env.NEXT_PUBLIC_PASSPORT_GITHUB_CALLBACK,
-  }),
-  platFormGroupSpec: Github.GithubProviderConfig,
-});
-
-platforms.set("Gitcoin", {
-  platform: new Gitcoin.GitcoinPlatform({
-    clientId: process.env.NEXT_PUBLIC_PASSPORT_GITHUB_CLIENT_ID,
-    redirectUri: process.env.NEXT_PUBLIC_PASSPORT_GITHUB_CALLBACK,
-  }),
-  platFormGroupSpec: Gitcoin.GitcoinProviderConfig,
-});
-
-platforms.set("Snapshot", {
-  platform: new Snapshot.SnapshotPlatform(),
-  platFormGroupSpec: Snapshot.SnapshotProviderConfig,
-});
-
-platforms.set("Poh", {
-  platform: new Poh.PohPlatform(),
-  platFormGroupSpec: Poh.PohProviderConfig,
-});
-
-platforms.set("ZkSync", {
-  platform: new ZkSync.ZkSyncPlatform(),
-  platFormGroupSpec: ZkSync.ZkSyncProviderConfig,
-});
-
-platforms.set("Lens", {
-  platform: new Lens.LensPlatform(),
-  platFormGroupSpec: Lens.LensProviderConfig,
-});
-
-platforms.set("GnosisSafe", {
-  platform: new GnosisSafe.GnosisSafePlatform(),
-  platFormGroupSpec: GnosisSafe.GnosisSafeProviderConfig,
-});
-
-platforms.set("ETH", {
-  platform: new ETH.ETHPlatform(),
-  platFormGroupSpec: ETH.ETHProviderConfig,
-});
-
-platforms.set("POAP", {
-  platform: new POAP.POAPPlatform(),
-  platFormGroupSpec: POAP.POAPProviderConfig,
-});
-
-platforms.set("Discord", {
-  platform: new Discord.DiscordPlatform(),
-  platFormGroupSpec: Discord.DiscordProviderConfig,
-});
-
-platforms.set("Linkedin", {
-  platform: new Linkedin.LinkedinPlatform({
-    clientId: process.env.NEXT_PUBLIC_PASSPORT_LINKEDIN_CLIENT_ID,
-    redirectUri: process.env.NEXT_PUBLIC_PASSPORT_LINKEDIN_CALLBACK,
-  }),
-  platFormGroupSpec: Linkedin.LinkedinProviderConfig,
-});
-
-platforms.set("GTC", {
-  platform: new GTC.GTCPlatform(),
-  platFormGroupSpec: GTC.GTCProviderConfig,
-});
-
-platforms.set("GtcStaking", {
-  platform: new GtcStaking.GTCStakingPlatform(),
-  platFormGroupSpec: GtcStaking.GTCStakingProviderConfig,
-});
-
-platforms.set("Google", {
-  platform: new Google.GooglePlatform({
-    clientId: process.env.NEXT_PUBLIC_PASSPORT_GOOGLE_CLIENT_ID,
-    redirectUri: process.env.NEXT_PUBLIC_PASSPORT_GOOGLE_CALLBACK,
-  }),
-  platFormGroupSpec: Google.GoogleProviderConfig,
-});
-
-platforms.set("Brightid", {
-  platform: new Brightid.BrightidPlatform(),
-  platFormGroupSpec: Brightid.BrightidProviderConfig,
-});
-platforms.set("Coinbase", {
-  platform: new Coinbase.CoinbasePlatform({
-    clientId: process.env.NEXT_PUBLIC_PASSPORT_COINBASE_CLIENT_ID,
-    redirectUri: process.env.NEXT_PUBLIC_PASSPORT_COINBASE_CALLBACK,
-  }),
-  platFormGroupSpec: Coinbase.CoinbaseProviderConfig,
-});
-if (process.env.NEXT_PUBLIC_FF_GUILD_STAMP === "on") {
-  platforms.set("GuildXYZ", {
-    platform: new GuildXYZ.GuildXYZPlatform(),
-    platFormGroupSpec: GuildXYZ.GuildXYZProviderConfig,
-  });
+  verifiedProviderIds: PROVIDER_ID[];
+  verifiedPlatforms: Partial<Record<PLATFORM_ID, PlatformProps>>;
+  platformExpirationDates: Partial<Record<PLATFORM_ID, Date>>; // the value should be the earliest expiration date
+  databaseReady: boolean;
+  database: PassportDatabase | undefined;
 }
 
 export enum IsLoadingPassportState {
   Idle,
   Loading,
-  LoadingFromCeramic,
+  CreatingPassport,
   FailedToConnect,
 }
 
+export type ProviderState = {
+  providerSpec: ProviderSpec;
+  stamp?: Stamp;
+};
+
 export type AllProvidersState = {
-  [provider in PROVIDER_ID]?: {
-    providerSpec: ProviderSpec;
-    stamp?: Stamp;
-  };
+  [provider in PROVIDER_ID]?: ProviderState;
 };
 
-const getProviderSpec = (platform: PLATFORM_ID, provider: string): ProviderSpec => {
-  return STAMP_PROVIDERS[platform]
-    ?.find((i) => i.providers.find((p) => p.name == provider))
-    ?.providers.find((p) => p.name == provider) as ProviderSpec;
-};
+// Generate {<stampName>: {providerSpec, stamp}} for all stamps
+const startingAllProvidersState: AllProvidersState = Object.values(stampPlatforms).reduce(
+  (allProvidersState, platform) => {
+    const platformGroupSpecs: PlatformGroupSpec[] = platform.ProviderConfig;
+    const platformProviderSpecs: ProviderSpec[] = platformGroupSpecs.map(({ providers }) => providers).flat();
 
-const startingAllProvidersState: AllProvidersState = {
-  Google: {
-    providerSpec: STAMP_PROVIDERS.Google as unknown as ProviderSpec,
-    stamp: undefined,
-  },
-  Ens: {
-    providerSpec: getProviderSpec("Ens", "Ens"),
-    stamp: undefined,
-  },
-  Poh: {
-    providerSpec: getProviderSpec("Poh", "Poh"),
-    stamp: undefined,
-  },
-  Twitter: {
-    providerSpec: getProviderSpec("Twitter", "Twitter"),
-    stamp: undefined,
-  },
-  TwitterFollowerGT100: {
-    providerSpec: getProviderSpec("Twitter", "TwitterFollowerGT100"),
-    stamp: undefined,
-  },
-  TwitterFollowerGT500: {
-    providerSpec: getProviderSpec("Twitter", "TwitterFollowerGT500"),
-    stamp: undefined,
-  },
-  TwitterFollowerGTE1000: {
-    providerSpec: getProviderSpec("Twitter", "TwitterFollowerGTE1000"),
-    stamp: undefined,
-  },
-  TwitterFollowerGT5000: {
-    providerSpec: getProviderSpec("Twitter", "TwitterFollowerGT5000"),
-    stamp: undefined,
-  },
-  TwitterTweetGT10: {
-    providerSpec: getProviderSpec("Twitter", "TwitterTweetGT10"),
-    stamp: undefined,
-  },
-  POAP: {
-    providerSpec: getProviderSpec("POAP", "POAP"),
-    stamp: undefined,
-  },
-  Facebook: {
-    providerSpec: getProviderSpec("Facebook", "Facebook"),
-    stamp: undefined,
-  },
-  FacebookProfilePicture: {
-    providerSpec: getProviderSpec("Facebook", "FacebookProfilePicture"),
-    stamp: undefined,
-  },
-  Brightid: {
-    providerSpec: getProviderSpec("Brightid", "Brightid"),
-    stamp: undefined,
-  },
-  Github: {
-    providerSpec: getProviderSpec("Github", "Github"),
-    stamp: undefined,
-  },
-  TenOrMoreGithubFollowers: {
-    providerSpec: getProviderSpec("Github", "TenOrMoreGithubFollowers"),
-    stamp: undefined,
-  },
-  FiftyOrMoreGithubFollowers: {
-    providerSpec: getProviderSpec("Github", "FiftyOrMoreGithubFollowers"),
-    stamp: undefined,
-  },
-  ForkedGithubRepoProvider: {
-    providerSpec: getProviderSpec("Github", "ForkedGithubRepoProvider"),
-    stamp: undefined,
-  },
-  StarredGithubRepoProvider: {
-    providerSpec: getProviderSpec("Github", "StarredGithubRepoProvider"),
-    stamp: undefined,
-  },
-  FiveOrMoreGithubRepos: {
-    providerSpec: getProviderSpec("Github", "FiveOrMoreGithubRepos"),
-    stamp: undefined,
-  },
-  Linkedin: {
-    providerSpec: getProviderSpec("Linkedin", "Linkedin"),
-    stamp: undefined,
-  },
-  Discord: {
-    providerSpec: getProviderSpec("Discord", "Discord"),
-    stamp: undefined,
-  },
-  Signer: {
-    providerSpec: getProviderSpec("Signer", "Signer"),
-    stamp: undefined,
-  },
-  GitPOAP: {
-    providerSpec: getProviderSpec("GitPOAP", "GitPOAP"),
-    stamp: undefined,
-  },
-  Snapshot: {
-    providerSpec: getProviderSpec("Snapshot", "Snapshot"),
-    stamp: undefined,
-  },
-  SnapshotProposalsProvider: {
-    providerSpec: getProviderSpec("Snapshot", "SnapshotProposalsProvider"),
-    stamp: undefined,
-  },
-  SnapshotVotesProvider: {
-    providerSpec: getProviderSpec("Snapshot", "SnapshotVotesProvider"),
-    stamp: undefined,
-  },
-  "ethPossessionsGte#1": {
-    providerSpec: getProviderSpec("ETH", "ethPossessionsGte#1"),
-    stamp: undefined,
-  },
-  "ethPossessionsGte#10": {
-    providerSpec: getProviderSpec("ETH", "ethPossessionsGte#10"),
-    stamp: undefined,
-  },
-  "ethPossessionsGte#32": {
-    providerSpec: getProviderSpec("ETH", "ethPossessionsGte#32"),
-    stamp: undefined,
-  },
-  FirstEthTxnProvider: {
-    providerSpec: getProviderSpec("ETH", "FirstEthTxnProvider"),
-    stamp: undefined,
-  },
-  EthGTEOneTxnProvider: {
-    providerSpec: getProviderSpec("ETH", "EthGTEOneTxnProvider"),
-    stamp: undefined,
-  },
-  EthGasProvider: {
-    providerSpec: getProviderSpec("ETH", "EthGasProvider"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numGrantsContributeToGte#1": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numGrantsContributeToGte#1"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numGrantsContributeToGte#10": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numGrantsContributeToGte#10"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numGrantsContributeToGte#25": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numGrantsContributeToGte#25"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numGrantsContributeToGte#100": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numGrantsContributeToGte#100"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#totalContributionAmountGte#10": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#totalContributionAmountGte#10"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#totalContributionAmountGte#100": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#totalContributionAmountGte#100"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#totalContributionAmountGte#1000": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#totalContributionAmountGte#1000"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numRoundsContributedToGte#1": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numRoundsContributedToGte#1"),
-    stamp: undefined,
-  },
-  "GitcoinContributorStatistics#numGr14ContributionsGte#1": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinContributorStatistics#numGr14ContributionsGte#1"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#numOwnedGrants#1": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#numOwnedGrants#1"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#numGrantContributors#10": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#numGrantContributors#10"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#numGrantContributors#25": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#numGrantContributors#25"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#numGrantContributors#100": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#numGrantContributors#100"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#totalContributionAmount#100": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#totalContributionAmount#100"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#totalContributionAmount#1000": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#totalContributionAmount#1000"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#totalContributionAmount#10000": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#totalContributionAmount#10000"),
-    stamp: undefined,
-  },
-  "GitcoinGranteeStatistics#numGrantsInEcoAndCauseRound#1": {
-    providerSpec: getProviderSpec("Gitcoin", "GitcoinGranteeStatistics#numGrantsInEcoAndCauseRound#1"),
-    stamp: undefined,
-  },
-  "gtcPossessionsGte#10": {
-    providerSpec: getProviderSpec("GTC", "gtcPossessionsGte#10"),
-    stamp: undefined,
-  },
-  "gtcPossessionsGte#100": {
-    providerSpec: getProviderSpec("GTC", "gtcPossessionsGte#100"),
-  },
-  SelfStakingBronze: {
-    providerSpec: getProviderSpec("GtcStaking", "SelfStakingBronze"),
-    stamp: undefined,
-  },
-  SelfStakingSilver: {
-    providerSpec: getProviderSpec("GtcStaking", "SelfStakingSilver"),
-    stamp: undefined,
-  },
-  SelfStakingGold: {
-    providerSpec: getProviderSpec("GtcStaking", "SelfStakingGold"),
-    stamp: undefined,
-  },
-  CommunityStakingBronze: {
-    providerSpec: getProviderSpec("GtcStaking", "CommunityStakingBronze"),
-    stamp: undefined,
-  },
-  CommunityStakingSilver: {
-    providerSpec: getProviderSpec("GtcStaking", "CommunityStakingSilver"),
-    stamp: undefined,
-  },
-  CommunityStakingGold: {
-    providerSpec: getProviderSpec("GtcStaking", "CommunityStakingGold"),
-    stamp: undefined,
-  },
-  NFT: {
-    providerSpec: getProviderSpec("NFT", "NFT"),
-    stamp: undefined,
-  },
-  ZkSync: {
-    providerSpec: getProviderSpec("ZkSync", "ZkSync"),
-    stamp: undefined,
-  },
-  Lens: {
-    providerSpec: getProviderSpec("Lens", "Lens"),
-    stamp: undefined,
-  },
-  GnosisSafe: {
-    providerSpec: getProviderSpec("GnosisSafe", "GnosisSafe"),
-    stamp: undefined,
-  },
-  Coinbase: {
-    providerSpec: getProviderSpec("Coinbase", "Coinbase"),
-    stamp: undefined,
-  },
-  GuildMember: {
-    providerSpec: getProviderSpec("GuildXYZ", "GuildMember"),
-    stamp: undefined,
-  },
-  GuildAdmin: {
-    providerSpec: getProviderSpec("GuildXYZ", "GuildAdmin"),
-    stamp: undefined,
-  },
-  GuildPassportMember: {
-    providerSpec: getProviderSpec("GuildXYZ", "GuildPassportMember"),
-    stamp: undefined,
-  },
-};
+    const platformProvidersState: AllProvidersState = platformProviderSpecs.reduce(
+      (providerState, providerSpec) => ({
+        ...providerState,
+        [providerSpec.name]: {
+          providerSpec,
+          stamp: undefined,
+        },
+      }),
+      {}
+    );
+
+    return {
+      ...allProvidersState,
+      ...platformProvidersState,
+    };
+  },
+  {}
+);
 
 const startingState: CeramicContextState = {
   passport: undefined,
   isLoadingPassport: IsLoadingPassportState.Loading,
   allProvidersState: startingAllProvidersState,
-  allPlatforms: platforms,
+  allPlatforms: new Map<PLATFORM_ID, PlatformProps>(),
   handleCreatePassport: async () => {},
   handleAddStamps: async () => {},
+  handlePatchStamps: async () => {},
   handleDeleteStamps: async () => {},
-  handleCheckRefreshPassport: async () => false,
+  handleComposeRetry: async () => {},
   passportHasCacaoError: false,
   cancelCeramicConnection: () => {},
   userDid: undefined,
   expiredProviders: [],
+  expiredPlatforms: {},
+  platformExpirationDates: {}, // <platform_id> : <earliest_exp_date>
   passportLoadResponse: undefined,
+  verifiedProviderIds: [],
+  verifiedPlatforms: {},
+  databaseReady: false,
+  database: undefined,
 };
 
-const CERAMIC_TIMEOUT_MS = process.env.CERAMIC_TIMEOUT_MS || "10000";
-
 export const CeramicContext = createContext(startingState);
+
+export const cleanPassport = (
+  passport: Passport,
+  database: DataStorageBase,
+  validProviderIds: PROVIDER_ID[]
+): {
+  passport: Passport;
+  expiredProviders: PROVIDER_ID[];
+  expirationDateProviders: Partial<Record<PROVIDER_ID, Date>>;
+} => {
+  const tempExpiredProviders: PROVIDER_ID[] = [];
+  let expirationDateProviders: Partial<Record<PROVIDER_ID, Date>> = {};
+  if (passport) {
+    passport.stamps = passport.stamps.filter((stamp: Stamp) => {
+      if (stamp) {
+        const providerId = stamp.credential.credentialSubject.provider as PROVIDER_ID;
+        if (!validProviderIds.includes(providerId)) {
+          return false;
+        }
+
+        const has_correct_issuer = IAM_VALID_ISSUER_DIDS.has(stamp.credential.issuer);
+        const has_correct_subject = stamp.credential.credentialSubject.id.toLowerCase() === database.did;
+        const has_expired = new Date(stamp.credential.expirationDate) < new Date();
+
+        expirationDateProviders[providerId] = new Date(stamp.credential.expirationDate);
+
+        if (has_expired && has_correct_issuer && has_correct_subject) {
+          tempExpiredProviders.push(providerId);
+        }
+
+        return has_correct_issuer && has_correct_subject;
+      } else {
+        return false;
+      }
+    });
+  }
+  return { passport, expiredProviders: tempExpiredProviders, expirationDateProviders };
+};
+
+export const getStampsToRetry = (initialPassportStamps: Stamp[], initialCeramicStamps: Stamp[]): Stamp[] =>
+  initialPassportStamps.filter((stamp: Stamp) => {
+    const existingStamp = initialCeramicStamps.find((composeStamp: Stamp) => stamp.provider === composeStamp.provider);
+    if (!existingStamp || stamp.credential.issuanceDate !== existingStamp.credential.issuanceDate) {
+      return true;
+    }
+  });
 
 export const CeramicContextProvider = ({ children }: { children: any }) => {
   const [allProvidersState, setAllProviderState] = useState(startingAllProvidersState);
   const resolveCancel = useRef<() => void>();
-  const [ceramicClient, setCeramicClient] = useState<CeramicDatabase | undefined>(undefined);
+  const [ceramicClient, setCeramicClient] = useState<ComposeDatabase | undefined>(undefined);
   const [isLoadingPassport, setIsLoadingPassport] = useState<IsLoadingPassportState>(IsLoadingPassportState.Loading);
   const [passport, setPassport] = useState<Passport | undefined>(undefined);
+  const [initialPassport, setInitialPassport] = useState<Passport | undefined>(undefined);
+  const [initialCeramicStamps, setInitialCeramicStamps] = useState<Stamp[] | undefined>(undefined);
   const [userDid, setUserDid] = useState<string | undefined>();
   const [expiredProviders, setExpiredProviders] = useState<PROVIDER_ID[]>([]);
+  const [expirationDateProviders, setExpirationDateProviders] = useState<Partial<Record<PROVIDER_ID, Date>>>({}); // <provider> : <expiration_date>
   const [passportLoadResponse, setPassportLoadResponse] = useState<PassportLoadResponse | undefined>();
   const [passportHasCacaoError, setPassportHasCacaoError] = useState<boolean>(false);
-  const [viewerConnection] = useViewerConnection();
   const [database, setDatabase] = useState<PassportDatabase | undefined>(undefined);
+  const { platforms: allPlatforms } = usePlatforms();
 
-  const { address, dbAccessToken, dbAccessTokenStatus } = useContext(UserContext);
-  const { refreshScore } = useContext(ScorerContext);
+  const { address } = useAccount();
+  const { dbAccessToken, did, checkSessionIsValid } = useDatastoreConnectionContext();
+  const { refreshScore, fetchStampWeights } = useContext(ScorerContext);
+  const customization = useCustomization();
+
+  const providerSpecs = useMemo(() => {
+    const providerSpecs: Partial<Record<PROVIDER_ID, ProviderSpec>> = {};
+    allPlatforms.forEach((platformProps) => {
+      platformProps.platFormGroupSpec.forEach(({ providers }) => {
+        providers.forEach((provider) => {
+          providerSpecs[provider.name] = provider;
+        });
+      });
+    });
+    return providerSpecs;
+  }, [allPlatforms]);
+
+  const { failure } = useMessage();
+
+  useEffect(() => {}, [customization]);
 
   useEffect(() => {
     return () => {
@@ -516,65 +213,123 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
   }, [address]);
 
   useEffect((): void => {
-    switch (viewerConnection.status) {
-      case "idle": {
-        setCeramicClient(undefined);
-        setDatabase(undefined);
-        break;
-      }
-      case "connecting": {
-        setIsLoadingPassport(IsLoadingPassportState.Loading);
-        break;
-      }
-      case "connected": {
-        if (dbAccessTokenStatus === "failed") {
-          setIsLoadingPassport(IsLoadingPassportState.FailedToConnect);
-        } else if (dbAccessToken && address) {
-          // Ceramic Network Connection
-          const ceramicClientInstance = new CeramicDatabase(
-            viewerConnection.selfID.did,
-            process.env.NEXT_PUBLIC_CERAMIC_CLIENT_URL,
-            undefined,
-            datadogLogs.logger
-          );
+    try {
+      if (dbAccessToken && address && !database && did) {
+        // Ceramic Network Connection
+        const ceramicClientInstance = new ComposeDatabase(
+          did,
+          process.env.NEXT_PUBLIC_CERAMIC_CLIENT_URL,
+          datadogLogs.logger
+        );
+        if (process.env.NEXT_PUBLIC_FF_CERAMIC_CLIENT && process.env.NEXT_PUBLIC_FF_CERAMIC_CLIENT === "on") {
           setCeramicClient(ceramicClientInstance);
-          setUserDid(ceramicClientInstance.did);
-          // Ceramic cache db
-          const databaseInstance = new PassportDatabase(
-            process.env.NEXT_PUBLIC_CERAMIC_CACHE_ENDPOINT || "",
-            address,
-            dbAccessToken,
-            datadogLogs.logger,
-            viewerConnection.selfID.did
-          );
-
-          setDatabase(databaseInstance);
         }
-        break;
-      }
-      case "failed": {
-        console.log("failed to connect self id :(");
+        setUserDid(ceramicClientInstance.did);
+        // Ceramic cache db
+        const databaseInstance = new PassportDatabase(
+          CERAMIC_CACHE_ENDPOINT || "",
+          address,
+          dbAccessToken,
+          datadogLogs.logger,
+          did
+        );
+
+        setDatabase(databaseInstance);
+      } else {
         setCeramicClient(undefined);
         setDatabase(undefined);
-        break;
+        setIsLoadingPassport(IsLoadingPassportState.Loading);
       }
-      default:
-        break;
+    } catch (e) {
+      console.log("failed to connect self id :(");
+      setCeramicClient(undefined);
+      setDatabase(undefined);
     }
-  }, [viewerConnection.status, address, dbAccessToken, dbAccessTokenStatus]);
+  }, [address, dbAccessToken]);
 
   useEffect(() => {
-    if (database && ceramicClient) {
-      fetchPassport(database, false, true);
+    if (database && address) {
+      fetchPassport(database, false, true).then((passport) => {
+        if (passport) {
+          setInitialPassport(passport);
+        }
+      });
     }
-  }, [database, ceramicClient]);
+  }, [database, address]);
+
+  useEffect(() => {
+    fetchStampWeights();
+  }, [customization.key]);
+
+  useEffect(() => {
+    if (ceramicClient) {
+      ceramicClient
+        .getPassport()
+        .then((passportResponse) => {
+          if (passportResponse !== undefined) {
+            const { passport } = passportResponse;
+            if (passport) {
+              setInitialCeramicStamps(passport.stamps);
+            }
+            console.log("loaded passport from compose-db", passportResponse);
+            datadogLogs.logger.info("loaded passport from compose-db", { passportResponse });
+          }
+        })
+        .catch((e) => {
+          console.log("failed to load passport from compose-db", e);
+          datadogLogs.logger.error("failed to load passport from compose-db", { error: e });
+        });
+    }
+  }, [ceramicClient]);
+
+  const handleComposeRetry = async (): Promise<SecondaryStorageBulkPatchResponse | void> => {
+    if (initialPassport && ceramicClient && initialCeramicStamps) {
+      try {
+        datadogLogs.logger.info("[ComposeDB] calling handleComposeRetry");
+        // using stamps as the source of truth, filter stamps for where the issuanceDate does not match the composeStamp if there is a composeStamp with the same provider
+        const stampsToRetry = getStampsToRetry(initialPassport.stamps, initialCeramicStamps);
+        // then add the stamps to ComposeDB
+        if (stampsToRetry.length > 0) {
+          // perform an update using the stamps that need to be retried
+          const composeDBPatchResponse = await ceramicClient.patchStamps(stampsToRetry);
+          return composeDBPatchResponse;
+        } else {
+          console.log("No stamps to retry");
+        }
+      } catch (e) {
+        console.log("error adding ceramic stamps", e);
+        datadogLogs.logger.error("Error adding ceramic stamps", { stamps: initialCeramicStamps, error: e });
+      }
+    } else {
+      datadogLogs.logger.info("Did not attempt handleComposeRetry");
+    }
+  };
+
+  const checkAndAlertInvalidCeramicSession = useCallback(() => {
+    if (!checkSessionIsValid()) {
+      failure({
+        title: "Ceramic Session Invalid",
+        message: "Your update was not logged to Ceramic. Please refresh the page to reset your Ceramic session.",
+      });
+      throw new Error("Session Expired");
+    }
+  }, [failure, checkSessionIsValid]);
 
   const passportLoadSuccess = (
-    database: CeramicDatabase | PassportDatabase,
+    database: PassportDatabase,
     passport?: Passport,
     skipLoadingState?: boolean
   ): Passport => {
-    const cleanedPassport = cleanPassport(passport, database) as Passport;
+    if (!passport) {
+      passport = { stamps: [] };
+    }
+    const {
+      passport: cleanedPassport,
+      expiredProviders,
+      expirationDateProviders,
+    } = cleanPassport(passport, database, Object.keys(providerSpecs) as PROVIDER_ID[]);
+    setExpiredProviders(expiredProviders);
+    setExpirationDateProviders(expirationDateProviders);
     hydrateAllProvidersState(cleanedPassport);
     setPassport(cleanedPassport);
     if (!skipLoadingState) setIsLoadingPassport(IsLoadingPassportState.Idle);
@@ -590,25 +345,20 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
   const passportLoadDoesNotExist = async () => {
     try {
       await handleCreatePassport();
-      // Start also fetching the passport from ceramic.
-      // If we are creating passport, this will already call loadCeramicPassport,
-      // so no need to call it again
-      loadCeramicPassport();
     } catch (e) {
       return false;
     }
   };
 
-  const fetchPassport = async (
-    database: CeramicDatabase | PassportDatabase,
+  const handlePassportUpdate = async (
+    passportResponse: PassportLoadResponse,
+    database: PassportDatabase,
     skipLoadingState?: boolean,
     isInitialLoad?: boolean
-  ): Promise<Passport | undefined> => {
-    if (!skipLoadingState) setIsLoadingPassport(IsLoadingPassportState.Loading);
-
-    // fetch, clean and set the new Passport state
-    const { status, errorDetails, passport } = await database.getPassport();
+  ) => {
     let passportToReturn: Passport | undefined = undefined;
+
+    const { status, errorDetails, passport } = passportResponse;
 
     switch (status) {
       case "Success":
@@ -635,118 +385,23 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
     return passportToReturn;
   };
 
-  const cleanPassport = (
-    passport: Passport | undefined | false,
-    database: CeramicDatabase | PassportDatabase
-  ): Passport | undefined | false => {
-    const tempExpiredProviders: PROVIDER_ID[] = [];
-    // clean stamp content if expired or from a different issuer
-    if (passport) {
-      passport.stamps = passport.stamps.filter((stamp: Stamp) => {
-        if (stamp) {
-          const has_expired = new Date(stamp.credential.expirationDate) < new Date();
-          if (has_expired) {
-            tempExpiredProviders.push(stamp.credential.credentialSubject.provider as PROVIDER_ID);
-          }
+  const fetchPassport = async (
+    database: PassportDatabase,
+    skipLoadingState?: boolean,
+    isInitialLoad?: boolean
+  ): Promise<Passport | undefined> => {
+    if (!skipLoadingState) setIsLoadingPassport(IsLoadingPassportState.Loading);
 
-          const has_correct_issuer = stamp.credential.issuer === IAM_ISSUER_DID;
-          const has_correct_subject = stamp.credential.credentialSubject.id.toLowerCase() === database.did;
+    // fetch, clean and set the new Passport state
+    const getResponse = await database.getPassport();
 
-          return !has_expired && has_correct_issuer && has_correct_subject;
-        } else {
-          return false;
-        }
-      });
-      setExpiredProviders(tempExpiredProviders);
-    }
-
-    return passport;
-  };
-
-  const handleCheckRefreshPassport = async (): Promise<boolean> => {
-    let success = true;
-    if (ceramicClient && passportLoadResponse) {
-      let passportHasError = passportLoadResponse.status === "PassportCacaoError";
-      let failedStamps = passportLoadResponse.errorDetails?.stampStreamIds || [];
-      try {
-        if (passportHasError) {
-          passportHasError = !(await ceramicClient.refreshPassport());
-        }
-
-        if (failedStamps && failedStamps.length) {
-          try {
-            await ceramicClient.deleteStampIDs(failedStamps);
-            failedStamps = [];
-          } catch {}
-        }
-
-        // fetchPassport to reset passport state
-        await fetchPassport(ceramicClient);
-
-        success = !passportHasError && !failedStamps.length;
-      } catch {
-        success = false;
-      }
-    }
-    return success;
-  };
-
-  // Start also fetching the passport from ceramic.
-  // We only do this to asses the "health" of the Passport & Stamps
-  // In case of erros we will force a reset of the Pasport.
-  // In case of borked stamps, we will not reset those, we'll simply ignore the borked stamps
-  // and the user ca claim other stamps
-  const loadCeramicPassport = async (): Promise<PassportLoadResponse> => {
-    if (ceramicClient) {
-      const ret = await ceramicClient.getPassport();
-      switch (ret.status) {
-        case "Success":
-          // Ok, nothing to do for now
-          break;
-        case "StampCacaoError":
-          // Ok, nothing to do for now. We will ignore borked stamps
-          break;
-        case "PassportCacaoError":
-          // We need to reset the passport to the last stable state
-          datadogRum.addError(
-            "Passport CACAO error -- error thrown on initial fetch. Going to refresh passport with SyncOptions.SYNC_ALWAYS option",
-            { address }
-          );
-          await ceramicClient.refreshPassport();
-          break;
-        case "DoesNotExist":
-          // Ok, nothing to do for now
-          break;
-        case "ExceptionRaised":
-          // Ok, nothing to do for now
-          break;
-      }
-      return ret;
-    }
-    // We just return an error here
-    return { status: "ExceptionRaised", passport: undefined };
+    return await handlePassportUpdate(getResponse, database, skipLoadingState, isInitialLoad);
   };
 
   const handleCreatePassport = async (): Promise<void> => {
-    if (database && ceramicClient) {
-      setIsLoadingPassport(IsLoadingPassportState.LoadingFromCeramic);
-
-      let initialStamps: Stamp[] = [];
-
-      try {
-        const { status, passport } = await Promise.race<PassportLoadResponse>([
-          returnEmptyPassportAfterTimeout(parseInt(CERAMIC_TIMEOUT_MS)),
-          returnEmptyPassportOnCancel(),
-          loadCeramicPassport(),
-        ]);
-        if (status === "Success" && passport?.stamps.length) {
-          initialStamps = passport.stamps;
-        }
-      } catch (e) {
-        console.error(e);
-      }
-
-      await database.createPassport(initialStamps);
+    if (database) {
+      setIsLoadingPassport(IsLoadingPassportState.CreatingPassport);
+      await database.createPassport();
       await fetchPassport(database);
     }
   };
@@ -755,29 +410,30 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
     if (resolveCancel?.current) resolveCancel.current();
   };
 
-  const returnEmptyPassportOnCancel = async (): Promise<PassportLoadResponse> =>
-    new Promise<PassportLoadResponse>((resolve) => {
-      resolveCancel.current = () => {
-        resolve({ status: "Success", passport: { stamps: [] } });
-      };
-    });
-
-  const returnEmptyPassportAfterTimeout = async (timeout: number): Promise<PassportLoadResponse> =>
-    new Promise<PassportLoadResponse>((resolve) =>
-      setTimeout(() => resolve({ status: "Success", passport: { stamps: [] } }), timeout)
-    );
-
   const handleAddStamps = async (stamps: Stamp[]): Promise<void> => {
     try {
       if (database) {
-        await database.addStamps(stamps);
-        const newPassport = await fetchPassport(database, true);
-        if (ceramicClient && newPassport) {
-          ceramicClient.setStamps(newPassport.stamps).catch((e) => console.log("error setting ceramic stamps", e));
+        const addResponse = await database.addStamps(stamps);
+
+        handlePassportUpdate(addResponse, database);
+
+        if (ceramicClient && addResponse.passport) {
+          (async () => {
+            try {
+              checkAndAlertInvalidCeramicSession();
+              const composeDBAddResponse = await ceramicClient.addStamps(stamps);
+              const composeDBMetadata = processComposeDBMetadata(addResponse.passport, {
+                adds: composeDBAddResponse,
+                deletes: [],
+              });
+              await database.patchStampComposeDBMetadata(composeDBMetadata);
+            } catch (e) {
+              console.log("error adding ceramic stamps", e);
+              datadogLogs.logger.error("Error adding ceramic stamps", { stamps, error: e });
+            }
+          })();
         }
-        if (dbAccessToken) {
-          refreshScore(address, dbAccessToken);
-        }
+        loadScore();
       }
     } catch (e) {
       datadogLogs.logger.error("Error adding multiple stamps", { stamps, error: e });
@@ -785,18 +441,96 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
     }
   };
 
+  const processComposeDBMetadata = (
+    updatedPassport: Passport | undefined,
+    composeDBPatchResponse: SecondaryStorageBulkPatchResponse
+  ): ComposeDBMetadataRequest[] => {
+    composeDBPatchResponse.deletes.forEach(({ secondaryStorageId, secondaryStorageError }) => {
+      if (secondaryStorageError) {
+        console.log(`Failed to delete stamp ${secondaryStorageId} from secondary storage: ${secondaryStorageError}`);
+        datadogLogs.logger.error(
+          `Failed to delete stamp ${secondaryStorageId} from secondary storage: ${secondaryStorageError}`
+        );
+      }
+    });
+
+    return composeDBPatchResponse.adds
+      .map((addResponse) => {
+        const { provider, secondaryStorageId, secondaryStorageError } = addResponse;
+
+        if (secondaryStorageError) {
+          console.log(
+            `Failed to add stamp ${secondaryStorageId} to secondary storage, error: ${secondaryStorageError}`
+          );
+          datadogLogs.logger.error("Error adding stamp to secondary storage", {
+            stamp: addResponse,
+            error: secondaryStorageError,
+          });
+        }
+
+        const primaryStorageId = updatedPassport?.stamps.find((stamp) => stamp.provider === provider)?.id;
+
+        if (!primaryStorageId) {
+          console.log(`Stamp ID not found for provider ${provider} when adding to secondary storage`);
+          datadogLogs.logger.error(`Stamp ID not found for provider ${provider} when adding to secondary storage`);
+        } else {
+          const compose_db_save_status: ComposeDBSaveStatus =
+            !secondaryStorageError && secondaryStorageId ? "saved" : "failed";
+          return {
+            id: primaryStorageId,
+            compose_db_stream_id: secondaryStorageId,
+            compose_db_save_status,
+          };
+        }
+      })
+      .filter((v?: ComposeDBMetadataRequest): v is ComposeDBMetadataRequest => Boolean(v));
+  };
+
+  const handlePatchStamps = async (stampPatches: StampPatch[]): Promise<void> => {
+    try {
+      if (database) {
+        const patchResponse = await database.patchStamps(stampPatches);
+        handlePassportUpdate(patchResponse, database);
+
+        if (ceramicClient && patchResponse.passport) {
+          (async () => {
+            try {
+              checkAndAlertInvalidCeramicSession();
+              const composeDBPatchResponse = await ceramicClient.patchStamps(stampPatches);
+              const composeDBMetadata = processComposeDBMetadata(patchResponse.passport, composeDBPatchResponse);
+              await database.patchStampComposeDBMetadata(composeDBMetadata);
+            } catch (e) {
+              console.log("error patching ceramic stamps", e);
+              datadogLogs.logger.error("Error patching ceramic stamps", { stampPatches, error: e });
+            }
+          })();
+        }
+        loadScore();
+      }
+    } catch (e) {
+      datadogLogs.logger.error("Error patching stamps", { stampPatches, error: e });
+      throw e;
+    }
+  };
+
   const handleDeleteStamps = async (providerIds: PROVIDER_ID[]): Promise<void> => {
     try {
       if (database) {
-        await database.deleteStamps(providerIds);
-
-        const newPassport = await fetchPassport(database, true);
-        if (ceramicClient && newPassport) {
-          ceramicClient.setStamps(newPassport.stamps).catch((e) => console.log("error setting ceramic stamps", e));
+        const deleteResponse = await database.deleteStamps(providerIds);
+        handlePassportUpdate(deleteResponse, database);
+        if (ceramicClient && deleteResponse.status === "Success" && deleteResponse.passport?.stamps) {
+          (async () => {
+            try {
+              checkAndAlertInvalidCeramicSession();
+              const responses = await ceramicClient.deleteStamps(providerIds);
+              processComposeDBMetadata(deleteResponse.passport, { adds: [], deletes: responses });
+            } catch (e) {
+              console.log("error deleting ceramic stamps", e);
+              datadogLogs.logger.error("Error deleting ceramic stamps", { providerIds, error: e });
+            }
+          })();
         }
-        if (dbAccessToken) {
-          refreshScore(address, dbAccessToken);
-        }
+        loadScore();
       }
     } catch (e) {
       datadogLogs.logger.error("Error deleting multiple stamps", { providerIds, error: e });
@@ -804,16 +538,47 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
     }
   };
 
+  const loadScore = () => {
+    if (dbAccessToken) {
+      // Currently the ceramic-cache/stamps endpoints refresh the main scorer,
+      // but not any alternate scorer used by a customization. So, we must
+      // force a refresh in that case. If we start passing the alternate_scorer_id
+      // to the ceramic-cache/stamps endpoints, we can remove this.
+      const forceRefresh = Boolean(customization.scorer?.id);
+      refreshScore(address, dbAccessToken, forceRefresh);
+    }
+  };
+
   const hydrateAllProvidersState = (passport?: Passport) => {
+    let existingProviderState = { ...startingAllProvidersState };
+    if (customization.allowListProviders) {
+      const providerSpecs = customization.allowListProviders.map(({ providers }) => providers).flat();
+
+      const allowListProviderState = providerSpecs.reduce(
+        (providerState, providerSpec) => ({
+          ...providerState,
+          [providerSpec.name]: {
+            providerSpec,
+            stamp: undefined,
+          },
+        }),
+        {}
+      );
+      existingProviderState = {
+        ...existingProviderState,
+        ...allowListProviderState,
+      };
+    }
+
     if (passport) {
       // set stamps into allProvidersState
-      let newAllProviderState = { ...startingAllProvidersState };
+      let newAllProviderState = { ...existingProviderState };
       passport.stamps.forEach((stamp: Stamp) => {
         const { provider } = stamp;
-        const providerState = allProvidersState[provider];
-        if (providerState) {
+        const providerSpec = providerSpecs[provider];
+        if (providerSpec) {
           const newProviderState = {
-            providerSpec: providerState.providerSpec,
+            providerSpec,
             stamp,
           };
           newAllProviderState[provider] = newProviderState;
@@ -829,34 +594,109 @@ export const CeramicContextProvider = ({ children }: { children: any }) => {
     setAllProviderState(startingAllProvidersState);
   };
 
-  const stateMemo = useMemo(
-    () => ({
-      passport,
-      isLoadingPassport,
-      allProvidersState,
-      handleCreatePassport,
-      handleAddStamps,
-      handleDeleteStamps,
-      userDid,
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [passport, isLoadingPassport, allProvidersState, userDid]
+  const verifiedProviderIds = useMemo(
+    () =>
+      Object.entries(allProvidersState).reduce((providerIds, [providerId, providerState]) => {
+        if (typeof providerState?.stamp?.credential !== "undefined") providerIds.push(providerId as PROVIDER_ID);
+        return providerIds;
+      }, [] as PROVIDER_ID[]),
+    [allProvidersState]
   );
+
+  const verifiedPlatforms: Record<PLATFORM_ID, PlatformProps> = useMemo(
+    () =>
+      Object.entries(Object.fromEntries(allPlatforms)).reduce(
+        (validPlatformProps, [platformKey, platformProps]) => {
+          if (
+            platformProps.platFormGroupSpec.some(({ providers }) =>
+              providers.some(({ name }) => verifiedProviderIds.includes(name))
+            )
+          )
+            validPlatformProps[platformKey as PLATFORM_ID] = platformProps;
+          return validPlatformProps;
+        },
+        {} as Record<PLATFORM_ID, PlatformProps>
+      ),
+    [verifiedProviderIds, allPlatforms]
+  );
+  const expiredPlatforms = useMemo(
+    () =>
+      Object.entries(Object.fromEntries(allPlatforms)).reduce(
+        (validPlatformProps, [platformKey, platformProps]) => {
+          if (
+            platformProps.platFormGroupSpec.some(({ providers }) =>
+              providers.some(({ name }) => expiredProviders.includes(name))
+            )
+          )
+            validPlatformProps[platformKey as PLATFORM_ID] = platformProps;
+          return validPlatformProps;
+        },
+        {} as Record<PLATFORM_ID, PlatformProps>
+      ),
+    [verifiedProviderIds, allPlatforms]
+  );
+
+  const platformExpirationDates = useMemo(() => {
+    let ret = {} as Partial<Record<PLATFORM_ID, Date>>;
+    allPlatforms.forEach((platformProps, platformKey) => {
+      const providerGroups = platformProps.platFormGroupSpec;
+
+      // Determine the earliest expiration date for each platform
+      // This will iterate over all platform groups, check the earliest expiration date for each group, and then the earliest expiration for the platform
+      const earliestExpirationDate = providerGroups.reduce(
+        (earliestGroupExpirationDate, groupSpec) => {
+          const earliestPlatformExpirationDate: Date | undefined = groupSpec.providers.reduce(
+            (earliestProviderDate, provider) => {
+              const d = expirationDateProviders[provider.name as PROVIDER_ID];
+              if (earliestProviderDate && d && d < earliestProviderDate) {
+                return d;
+              }
+              // If one of d or earliestProviderDate is undefined, this will return the one that is defined
+              // or undefined if both are undefined
+              return d || earliestProviderDate;
+            },
+            undefined as Date | undefined
+          );
+
+          if (
+            earliestPlatformExpirationDate &&
+            earliestGroupExpirationDate &&
+            earliestPlatformExpirationDate < earliestGroupExpirationDate
+          ) {
+            return earliestPlatformExpirationDate;
+          }
+          // If one of earliestPlatformExpirationDate or earliestGroupExpirationDate is undefined, this will return the one that is defined
+          // or undefined if both are undefined
+          return earliestPlatformExpirationDate || earliestGroupExpirationDate;
+        },
+        undefined as Date | undefined
+      );
+      ret[platformKey as PLATFORM_ID] = earliestExpirationDate;
+    });
+    return ret;
+  }, [verifiedProviderIds, allPlatforms, expirationDateProviders]);
 
   const providerProps = {
     passport,
     isLoadingPassport,
     allProvidersState,
-    allPlatforms: platforms,
+    allPlatforms,
     handleCreatePassport,
     handleAddStamps,
+    handlePatchStamps,
     handleDeleteStamps,
-    handleCheckRefreshPassport,
     cancelCeramicConnection,
+    handleComposeRetry,
     userDid,
     expiredProviders,
+    expiredPlatforms,
     passportLoadResponse,
     passportHasCacaoError,
+    verifiedProviderIds,
+    verifiedPlatforms,
+    platformExpirationDates,
+    databaseReady: !!database,
+    database,
   };
 
   return <CeramicContext.Provider value={providerProps}>{children}</CeramicContext.Provider>;

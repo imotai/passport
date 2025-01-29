@@ -1,5 +1,5 @@
 import axios from "axios";
-import { Logger } from "./ceramicClient";
+import { Logger } from "./logger";
 import { DataStorageBase } from "./types";
 import type { DID as CeramicDID } from "dids";
 import {
@@ -9,6 +9,8 @@ import {
   PassportLoadResponse,
   PassportLoadErrorDetails,
   Passport,
+  StampPatch,
+  ComposeDBMetadataRequest,
 } from "@gitcoin/passport-types";
 
 export class PassportDatabase implements DataStorageBase {
@@ -18,15 +20,8 @@ export class PassportDatabase implements DataStorageBase {
   did: string;
   logger: Logger;
   allowEmpty: boolean;
-  
 
-  constructor(
-    passportScorerUrl: string,
-    address: string,
-    token: string,
-    logger?: Logger,
-    did?: CeramicDID,
-  ) {
+  constructor(passportScorerUrl: string, address: string, token: string, logger?: Logger, did?: CeramicDID) {
     this.passportScorerUrl = passportScorerUrl;
     this.address = address;
     this.logger = logger;
@@ -35,38 +30,51 @@ export class PassportDatabase implements DataStorageBase {
     this.token = token;
   }
 
-  async createPassport(initialStamps?: Stamp[]): Promise<string> {
+  async createPassport(initialStamps?: Stamp[]): Promise<PassportLoadResponse> {
     if (initialStamps?.length) {
       await this.addStamps(initialStamps);
     } else {
       this.allowEmpty = true;
     }
 
-    return "created";
+    return {
+      status: "Success",
+    };
   }
 
-  async getPassport(): Promise<PassportLoadResponse> {
+  processPassportResponse = async (
+    request: Promise<any>,
+    requestType: string,
+    allowEmpty?: boolean
+  ): Promise<PassportLoadResponse> => {
     let passport: Passport;
     let status: PassportLoadStatus = "Success";
     let errorDetails: PassportLoadErrorDetails;
 
     try {
-      const response = await axios.get(`${this.passportScorerUrl}ceramic-cache/stamp?address=${this.address}`);
-      this.logger.info(`[Scorer] Loaded passport for did ${this.did} => ${this.address}`);
+      const response = await request;
+      this.logger.info(`[Scorer] made ${requestType} request for passport for did ${this.did} => ${this.address}`);
 
       const { data } = response;
-      if (data && data.success && (this.allowEmpty || data.stamps.length !== 0)) {
+      if (data && data.success && (this.allowEmpty || allowEmpty || data.stamps.length !== 0)) {
         passport = {
           issuanceDate: null,
           expiryDate: null,
-          stamps: data.stamps.map((stamp: any) => ({ provider: stamp.stamp?.credentialSubject?.provider, credential: stamp.stamp })),
+          stamps: data.stamps.map((stamp: any) => ({
+            id: stamp.id,
+            provider: stamp.stamp?.credentialSubject?.provider,
+            credential: stamp.stamp,
+          })),
         };
       } else {
         status = "DoesNotExist";
       }
     } catch (e) {
       status = "ExceptionRaised";
-      this.logger.error(`[Scorer] Error when loading passport for did  ${this.address}:` + e.toString(), { error: e });
+      this.logger.error(
+        `[Scorer] Error thrown when making ${requestType} for passport with did ${this.address}: ` + e.toString(),
+        { error: e }
+      );
     } finally {
       return {
         passport,
@@ -74,38 +82,59 @@ export class PassportDatabase implements DataStorageBase {
         errorDetails,
       };
     }
+  };
+
+  async getPassport(): Promise<PassportLoadResponse> {
+    return await this.processPassportResponse(
+      axios.get(`${this.passportScorerUrl}/stamp?address=${this.address}`),
+      "get"
+    );
   }
 
-  addStamps = async (stamps: Stamp[]): Promise<void> => {
+  addStamps = async (stamps: Stamp[]): Promise<PassportLoadResponse> => {
     this.logger.info(`adding stamp to passportScorer address: ${this.address}`);
-    try {
-      const stampsToSave = stamps.map((stamp) => ({
-        provider: stamp.provider,
-        stamp: stamp.credential,
-      }));
+    const stampsToSave = stamps.map((stamp) => ({
+      provider: stamp.provider,
+      stamp: stamp.credential,
+    }));
 
-      await axios.post(`${this.passportScorerUrl}ceramic-cache/stamps/bulk`, stampsToSave, {
-          headers:
-            { Authorization: `Bearer ${this.token}`},
-        });
-    } catch (e) {
-      this.logger.error(`Error saving stamp to passportScorer address:  ${this.address}:` + e.toString());
-    }
+    return await this.processPassportResponse(
+      axios.post(`${this.passportScorerUrl}/stamps/bulk`, stampsToSave, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      }),
+      "post"
+    );
   };
 
-  addStamp = async (stamp: Stamp): Promise<void> => {
-    console.log("Not implemented");
-  };
-
-  async deleteStamps(providers: PROVIDER_ID[]): Promise<void> {
+  deleteStamps = async (providers: PROVIDER_ID[]): Promise<PassportLoadResponse> => {
     this.logger.info(`deleting stamp from passportScorer for ${providers.join(", ")} on ${this.address}`);
-    try {
-      await axios.delete(`${this.passportScorerUrl}ceramic-cache/stamps/bulk`, {
+    return await this.processPassportResponse(
+      axios.delete(`${this.passportScorerUrl}/stamps/bulk`, {
         data: providers.map((provider) => ({ provider })),
         headers: { Authorization: `Bearer ${this.token}` },
-      });
-    } catch (e) {
-      this.logger.error(`Error deleting stamp from passportScorer for ${providers.join(", ")} on ${this.address}: ` + e.toString());
-    }
-  }
+      }),
+      "delete",
+      true
+    );
+  };
+
+  patchStamps = async (stampPatches: StampPatch[]): Promise<PassportLoadResponse> => {
+    this.logger.info(`patching stamps in passportScorer for address: ${this.address}`);
+    const body = stampPatches.map(({ provider, credential }) => ({ provider, stamp: credential }));
+    return await this.processPassportResponse(
+      axios.patch(`${this.passportScorerUrl}/stamps/bulk`, body, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      }),
+      "patch"
+    );
+  };
+
+  patchStampComposeDBMetadata = async (composeDBMetadata: ComposeDBMetadataRequest[]): Promise<void> => {
+    await this.processPassportResponse(
+      axios.patch(`${this.passportScorerUrl}/stamps/bulk/meta/compose-db`, composeDBMetadata, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      }),
+      "patch"
+    );
+  };
 }

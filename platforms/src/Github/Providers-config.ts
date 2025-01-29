@@ -1,47 +1,49 @@
-import { PlatformSpec, PlatformGroupSpec } from "../types";
+import { MAX_CONTRIBUTION_DAYS } from "../utils/githubClient";
+import { PlatformSpec, PlatformGroupSpec, Provider } from "../types";
+import { GithubContributionActivityProvider } from "./Providers/githubContributionActivity";
 
-export const GithubPlatformDetails: PlatformSpec = {
-  icon: "./assets/githubStampIcon.svg",
+export const PlatformDetails: PlatformSpec = {
+  icon: "./assets/githubWhiteStampIcon.svg",
   platform: "Github",
   name: "Github",
-  description: "Connect your existing Github account to verify.",
+  description: "Connect to GitHub to verify your activity based on days with active commits.",
   connectMessage: "Connect Account",
-  enablePlatformCardUpdate: true,
+  website: "https://github.com",
 };
 
-export const GithubProviderConfig: PlatformGroupSpec[] = [
+let providers: Provider[] = [];
+let ProviderConfig: PlatformGroupSpec[] = [];
+
+ProviderConfig = [
   {
-    platformGroup: "Account Name",
-    providers: [{ title: "Encrypted", name: "Github" }],
-  },
-  {
-    platformGroup: "Repositories",
+    platformGroup: "Commit Days Credentials:",
     providers: [
       {
-        title: "Five or more Github repos",
-        name: "FiveOrMoreGithubRepos",
+        title: "Made commits on at least 30 distinct days",
+        name: "githubContributionActivityGte#30",
       },
       {
-        title: "At least 1 Github repo forked by another user",
-        name: "ForkedGithubRepoProvider",
+        title: "Made commits on at least 60 distinct days",
+        name: "githubContributionActivityGte#60",
       },
       {
-        title: "At least 1 Github repo starred by another user",
-        name: "StarredGithubRepoProvider",
-      },
-    ],
-  },
-  {
-    platformGroup: "Followers",
-    providers: [
-      {
-        title: "Ten or more Github followers",
-        name: "TenOrMoreGithubFollowers",
-      },
-      {
-        title: "Fifty or more Github followers",
-        name: "FiftyOrMoreGithubFollowers",
+        title: "Made commits on at least 120 distinct days",
+        name: "githubContributionActivityGte#120",
       },
     ],
   },
 ];
+
+providers = [
+  new GithubContributionActivityProvider({
+    threshold: "30",
+  }),
+  new GithubContributionActivityProvider({
+    threshold: "60",
+  }),
+  new GithubContributionActivityProvider({
+    threshold: `${MAX_CONTRIBUTION_DAYS}`,
+  }),
+];
+
+export { providers, ProviderConfig };

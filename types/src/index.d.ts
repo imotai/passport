@@ -2,16 +2,26 @@ import { JsonRpcSigner } from "@ethersproject/providers";
 // BrightId Shared Types
 export { BrightIdProcedureResponse, BrightIdVerificationResponse, BrightIdSponsorshipResponse } from "./brightid";
 
+import { MultiAttestationRequest } from "@ethereum-attestation-service/eas-sdk";
+import { JWSSignature } from "dids";
+
 // Typing for required parts of DIDKit
 export type DIDKitLib = {
   verifyCredential: (vc: string, proofOptions: string) => Promise<string>;
   issueCredential: (credential: string, proofOptions: string, key: string) => Promise<string>;
   keyToDID: (method_pattern: string, jwk: string) => string;
   keyToVerificationMethod: (method_pattern: string, jwk: string) => Promise<string>;
+  /**
+   * @param {string} credential
+   * @param {string} linked_data_proof_options
+   * @param {string} public_key
+   * @returns {Promise<any>}
+   */
+  prepareIssueCredential(credential: string, linked_data_proof_options: string, public_key: string): Promise<any>;
 } & { [key: string]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // rough outline of a VerifiableCredential
-export type VerifiableCredential = {
+export type VerifiableEd25519Credential = {
   "@context": string[];
   type: string[];
   credentialSubject: {
@@ -21,23 +31,120 @@ export type VerifiableCredential = {
     provider?: string;
     address?: string;
     challenge?: string;
+    metaPointer?: string;
   };
   issuer: string;
   issuanceDate: string;
   expirationDate: string;
-  proof: {
+  proof?: {
     type: string;
     proofPurpose: string;
     verificationMethod: string;
     created: string;
     jws: string;
+    eip712Domain?: {
+      primaryType: string;
+      types: {
+        [key: string]: {
+          name: string;
+          type: string;
+        }[];
+      };
+    };
   };
 };
+
+export type VerifiableEip712Credential = {
+  "@context": string[];
+  type: string[];
+  credentialSubject: {
+    id: string;
+    "@context": { [key: string]: string };
+    hash?: string;
+    provider?: string;
+    address?: string;
+    challenge?: string;
+    metaPointer?: string;
+  };
+  issuer: string;
+  issuanceDate: string;
+  expirationDate: string;
+  proof: {
+    "@context": string;
+    type: string;
+    proofPurpose: string;
+    proofValue: string;
+    verificationMethod: string;
+    created: string;
+    eip712Domain: {
+      domain: {
+        name: string;
+      };
+      primaryType: string;
+      types: {
+        [key: string]: {
+          name: string;
+          type: string;
+        }[];
+      };
+    };
+  };
+};
+
+/// Define a type for the credential as it is stored in compose
+/// This will be identical to VerifiableEip712Credential, with some characters like `@` escaped
+// being changed to `_`
+export type VerifiableEip712CredentialComposeEncoded = {
+  _context: string[];
+  type: string[];
+  credentialSubject: {
+    id: string;
+    _context: { [key: string]: string };
+    hash?: string;
+    provider?: string;
+    address?: string;
+    challenge?: string;
+  };
+  issuer: string;
+  issuanceDate: string;
+  expirationDate: string;
+  proof: {
+    _context: string;
+    type: string;
+    proofPurpose: string;
+    proofValue: string;
+    verificationMethod: string;
+    created: string;
+    eip712Domain: {
+      domain: {
+        name: string;
+      };
+      primaryType: string;
+      types: {
+        [key: string]: {
+          name: string;
+          type: string;
+        }[];
+      };
+    };
+  };
+};
+export type VerifiableCredential = VerifiableEd25519Credential | VerifiableEip712Credential;
 
 // A ProviderContext is used as a temporary storage so that providers can can share data
 // between them, in case multiple VCs are requests in one http request
 export type ProviderContext = {
   [key: string]: unknown;
+};
+
+export type SignatureType = "EIP712" | "Ed25519";
+
+export type SignedDidChallenge = {
+  signatures: JWSSignature[];
+  payload: any;
+  cid: number[];
+  cacao: number[];
+  issuer: string;
 };
 
 // values received from client and fed into the verify route
@@ -49,14 +156,9 @@ export type RequestPayload = {
   proofs?: {
     [k: string]: string;
   };
-  signer?: {
-    challenge: VerifiableCredential;
-    signature: string;
-    address: string;
-  };
   jsonRpcSigner?: JsonRpcSigner;
   challenge?: string;
-  issuer?: string;
+  signatureType?: SignatureType;
 };
 
 // response Object return by verify procedure
@@ -72,9 +174,11 @@ export type ChallengePayload = {
 // response Object return by verify procedure
 export type VerifiedPayload = {
   valid: boolean;
-  error?: string[];
+  // failureReason?: string;
+  errors?: string[];
   // This will be combined with the ProofRecord (built from the verified content in the Payload)
   record?: { [k: string]: string };
+  expiresInSeconds?: number;
 };
 
 export type CheckRequestBody = {
@@ -104,6 +208,7 @@ export type ChallengeRequestBody = {
 export type VerifyRequestBody = {
   challenge: VerifiableCredential;
   payload: RequestPayload;
+  signedChallenge?: SignedDidChallenge;
 };
 
 // IAM HTTP Response body types
@@ -115,7 +220,7 @@ export type ErrorResponseBody = {
   error?: string;
   code?: number;
 };
-export type CredentialResponseBody = ValidResponseBody & ErrorResponseBody;
+export type CredentialResponseBody = ValidResponseBody | ErrorResponseBody;
 
 // Issued Credential response
 export type IssuedChallenge = {
@@ -136,11 +241,35 @@ export type VerifiableCredentialRecord = {
 };
 
 export type Stamp = {
-  // recordUserName: string;
-  // credentialIssuer: string;
-  streamId?: string; // Must not be undefined for stamps loaded from ceramic
+  id?: number;
   provider: PROVIDER_ID;
-  credential: VerifiableCredential;
+  credential: VerifiableEd25519Credential | VerifiableEip712Credential;
+};
+
+// StampPatch should have "provider" mandatory and "credential" optional
+export type StampPatch = Pick<Stamp, "provider"> & Partial<Pick<Stamp, "credential">>;
+
+export type ComposeDBSaveStatus = "saved" | "failed";
+export type ComposeDBMetadataRequest = {
+  id: number;
+  compose_db_save_status: ComposeDBSaveStatus;
+  compose_db_stream_id: string | undefined;
+};
+
+export type SecondaryStorageAddResponse = {
+  provider: string;
+  secondaryStorageId?: string;
+  secondaryStorageError?: string;
+};
+
+export type SecondaryStorageDeleteResponse = {
+  secondaryStorageId: string;
+  secondaryStorageError?: string;
+};
+
+export type SecondaryStorageBulkPatchResponse = {
+  adds: SecondaryStorageAddResponse[];
+  deletes: SecondaryStorageDeleteResponse[];
 };
 
 export type Passport = {
@@ -157,7 +286,8 @@ export type PassportLoadStatus =
   | "PassportCacaoError";
 
 export type PassportLoadErrorDetails = {
-  stampStreamIds: string[];
+  stampStreamIds?: string[];
+  messages?: string[];
 };
 
 export type PassportLoadResponse = {
@@ -166,13 +296,37 @@ export type PassportLoadResponse = {
   errorDetails?: PassportLoadErrorDetails;
 };
 
+export type PassportAttestation = {
+  multiAttestationRequest: MultiAttestationRequest[];
+  nonce: number;
+  fee: any;
+};
+
+export type EasPayload = {
+  passport: PassportAttestation;
+  signature: {
+    v: number;
+    r: string;
+    s: string;
+  };
+  invalidCredentials: VerifiableCredential[];
+  error?: string;
+};
+
+export type EasRequestBody = {
+  nonce: number;
+  recipient: string;
+  credentials?: VerifiableCredential[];
+  chainIdHex: string;
+  customScorerId?: number;
+};
+
 // Passport DID
 export type DID = string;
 
 export type PLATFORM_ID =
   | "Google"
   | "Ens"
-  | "Poh"
   | "Twitter"
   | "POAP"
   | "Facebook"
@@ -181,30 +335,41 @@ export type PLATFORM_ID =
   | "Gitcoin"
   | "Linkedin"
   | "Discord"
-  | "GitPOAP"
   | "Signer"
   | "Snapshot"
   | "ETH"
-  | "GTC"
   | "GtcStaking"
   | "NFT"
-  | "ZkSync"
   | "Lens"
   | "GnosisSafe"
   | "Coinbase"
-  | "GuildXYZ";
+  | "GuildXYZ"
+  | "Hypercerts"
+  | "PHI"
+  | "Holonym"
+  | "PhoneVerification"
+  | "Idena"
+  | "Civic"
+  | "GrantsStack"
+  | "ZkSync"
+  | "TrustaLabs"
+  | "Outdid"
+  | "AllowList"
+  | "Binance"
+  | "DeveloperList"
+  | `Custom#${string}`;
+
+export type PLATFORM_CATEGORY = {
+  name: string;
+  id?: string;
+  description: string;
+  platforms: PLATFORM_ID[];
+};
 
 export type PROVIDER_ID =
   | "Signer"
   | "Google"
   | "Ens"
-  | "Poh"
-  | "Twitter"
-  | "TwitterTweetGT10"
-  | "TwitterFollowerGT100"
-  | "TwitterFollowerGT500"
-  | "TwitterFollowerGTE1000"
-  | "TwitterFollowerGT5000"
   | "POAP"
   | "Facebook"
   | "FacebookProfilePicture"
@@ -215,48 +380,75 @@ export type PROVIDER_ID =
   | "ForkedGithubRepoProvider"
   | "StarredGithubRepoProvider"
   | "FiveOrMoreGithubRepos"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#1"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#10"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#25"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#100"
+  | "githubContributionActivityGte#30"
+  | "githubContributionActivityGte#60"
+  | "githubContributionActivityGte#120"
   | "GitcoinContributorStatistics#totalContributionAmountGte#10"
   | "GitcoinContributorStatistics#totalContributionAmountGte#100"
   | "GitcoinContributorStatistics#totalContributionAmountGte#1000"
   | "GitcoinContributorStatistics#numRoundsContributedToGte#1"
   | "GitcoinContributorStatistics#numGr14ContributionsGte#1"
-  | "GitcoinGranteeStatistics#numOwnedGrants#1"
-  | "GitcoinGranteeStatistics#numGrantContributors#10"
-  | "GitcoinGranteeStatistics#numGrantContributors#25"
-  | "GitcoinGranteeStatistics#numGrantContributors#100"
-  | "GitcoinGranteeStatistics#totalContributionAmount#100"
-  | "GitcoinGranteeStatistics#totalContributionAmount#1000"
-  | "GitcoinGranteeStatistics#totalContributionAmount#10000"
-  | "GitcoinGranteeStatistics#numGrantsInEcoAndCauseRound#1"
   | "Linkedin"
   | "Discord"
-  | "GitPOAP"
   | "Snapshot"
   | "SnapshotProposalsProvider"
-  | "SnapshotVotesProvider"
   | "ethPossessionsGte#1"
   | "ethPossessionsGte#10"
   | "ethPossessionsGte#32"
   | "FirstEthTxnProvider"
   | "EthGTEOneTxnProvider"
   | "EthGasProvider"
-  | "gtcPossessionsGte#10"
-  | "gtcPossessionsGte#100"
   | "SelfStakingBronze"
   | "SelfStakingSilver"
   | "SelfStakingGold"
-  | "CommunityStakingBronze"
-  | "CommunityStakingSilver"
-  | "CommunityStakingGold"
   | "NFT"
-  | "ZkSync"
+  | "NFTScore#50"
+  | "NFTScore#75"
+  | "NFTScore#90"
+  | "ZkSyncEra"
+  | "zkSyncScore#20"
+  | "zkSyncScore#50"
+  | "zkSyncScore#5"
   | "Lens"
   | "GnosisSafe"
-  | "Coinbase"
-  | "GuildMember"
+  | "CoinbaseDualVerification"
+  | "CoinbaseDualVerification2"
   | "GuildAdmin"
-  | "GuildPassportMember";
+  | "GuildPassportMember"
+  | "Hypercerts"
+  | "HolonymGovIdProvider"
+  | "HolonymPhone"
+  | "IdenaState#Newbie"
+  | "IdenaState#Verified"
+  | "IdenaState#Human"
+  | "CivicCaptchaPass"
+  | "CivicUniquenessPass"
+  | "CivicLivenessPass"
+  | "GrantsStack3Projects"
+  | "GrantsStack5Projects"
+  | "GrantsStack7Projects"
+  | "GrantsStack2Programs"
+  | "GrantsStack4Programs"
+  | "GrantsStack6Programs"
+  | "TrustaLabs"
+  | "BeginnerCommunityStaker"
+  | "ExperiencedCommunityStaker"
+  | "TrustedCitizen"
+  | "ETHScore#50"
+  | "ETHScore#75"
+  | "ETHScore#90"
+  | "ETHDaysActive#50"
+  | "ETHGasSpent#0.25"
+  | "ETHnumTransactions#100"
+  | "Outdid"
+  | "AllowList"
+  | `AllowList#${string}`
+  | "BinanceBABT"
+  | "BinanceBABT2"
+  | `DeveloperList#${string}#${string}`;
+
+export type StampBit = {
+  bit: number;
+  index: number;
+  name: string;
+};

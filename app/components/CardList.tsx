@@ -1,142 +1,173 @@
 // --- React Methods
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useCallback, useContext, useMemo, useState } from "react";
 
-import { PLATFORMS, PlatformSpec } from "../config/platforms";
-import { PlatformGroupSpec, STAMP_PROVIDERS, UpdatedPlatforms } from "../config/providers";
-
-// --- Components
-import { LoadingCard } from "./LoadingCard";
-import { GenericPlatform } from "./GenericPlatform";
-
-// --- Identity Providers
-import { SideBarContent } from "./SideBarContent";
+import { usePlatforms } from "../hooks/usePlatforms";
 
 // --- Chakra UI Elements
-import { Drawer, DrawerOverlay, useDisclosure } from "@chakra-ui/react";
-import { PLATFORM_ID, PROVIDER_ID } from "@gitcoin/passport-platforms/dist/commonjs/types";
-import { CeramicContext } from "../context/ceramicContext";
-import { PlatformCard } from "./PlatformCard";
+import { useDisclosure } from "@chakra-ui/react";
+import { PLATFORM_ID, PROVIDER_ID } from "@gitcoin/passport-types";
 import PageWidthGrid from "../components/PageWidthGrid";
+import { PlatformScoreSpec, ScorerContext } from "../context/scorerContext";
+import { Category } from "./Category";
+import { CeramicContext } from "../context/ceramicContext";
+import { GenericPlatform } from "./GenericPlatform";
+import { useCustomization } from "../hooks/useCustomization";
 
 export type CardListProps = {
   isLoading?: boolean;
-  cardClassName?: string;
+  className?: string;
+  initialOpen?: boolean;
 };
 
 type SelectedProviders = Record<PLATFORM_ID, PROVIDER_ID[]>;
 
-export const CardList = ({ isLoading = false, cardClassName }: CardListProps): JSX.Element => {
-  const { allProvidersState, allPlatforms } = useContext(CeramicContext);
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const btnRef = useRef();
-  const [currentPlatform, setCurrentPlatform] = useState<PlatformSpec | undefined>();
-  const [currentProviders, setCurrentProviders] = useState<PlatformGroupSpec[]>([]);
-  const [updatedPlatforms, setUpdatedPlatforms] = useState<UpdatedPlatforms | undefined>();
+const useShouldDisplayPlatform = () => {
+  const customization = useCustomization();
+  const { platformProviderIds, platforms } = usePlatforms();
 
-  // get the selected Providers
-  const [selectedProviders, setSelectedProviders] = useState<SelectedProviders>(
-    PLATFORMS.reduce((plaforms, platform) => {
-      // get all providerIds for this platform
-      const providerIds =
-        STAMP_PROVIDERS[platform.platform]?.reduce((all, stamp) => {
-          return all.concat(stamp.providers?.map((provider) => provider.name as PROVIDER_ID));
-        }, [] as PROVIDER_ID[]) || [];
-      // default to empty array for each platform
-      plaforms[platform.platform] = providerIds.filter(
-        (providerId) => typeof allProvidersState[providerId]?.stamp?.credential !== "undefined"
+  const shouldDisplayPlatform = useCallback(
+    (platform: PlatformScoreSpec): boolean => {
+      const providers = platformProviderIds[platform.platform];
+
+      if (platform.possiblePoints <= 0) {
+        return false;
+      }
+
+      const platformGroupSpec = platforms.get(platform.platform)?.platFormGroupSpec;
+
+      const allProvidersDeprecated = platformGroupSpec?.every((group) =>
+        group.providers.every((provider) => provider.isDeprecated)
       );
-      // return all platforms
-      return plaforms;
-    }, {} as SelectedProviders)
+
+      // Hide if all providers are deprecated for this platform and no points were earned
+      if (platform.earnedPoints <= 0 && allProvidersDeprecated) {
+        return false;
+      }
+
+      // Hide allow list if no points were earned when onboarding
+      if (platform.platform.startsWith("AllowList") && platform.earnedPoints === 0) {
+        return false;
+      }
+
+      if (
+        customization.scorer?.weights &&
+        !providers.some((provider) => parseFloat(customization.scorer?.weights?.[provider] || "") > 0)
+      ) {
+        return false;
+      }
+
+      // Feature Flag Guild Stamp
+      if (process.env.NEXT_PUBLIC_FF_GUILD_STAMP !== "on" && platform.platform === "GuildXYZ") return false;
+
+      // Feature Flag Idena Stamp
+      if (process.env.NEXT_PUBLIC_FF_IDENA_STAMP !== "on" && platform.platform === "Idena") return false;
+
+      // Feature Flag PHI Stamp
+      if (process.env.NEXT_PUBLIC_FF_PHI_STAMP !== "on" && platform.platform === "PHI") return false;
+
+      // Feature Flag Holonym Stamp
+      if (process.env.NEXT_PUBLIC_FF_HOLONYM_STAMP !== "on" && platform.platform === "Holonym") return false;
+
+      if (process.env.NEXT_PUBLIC_FF_TRUSTALABS_STAMPS !== "on" && platform.platform === "TrustaLabs") return false;
+
+      if (process.env.NEXT_PUBLIC_FF_OUTDID_STAMP !== "on" && platform.platform === "Outdid") return false;
+
+      return true;
+    },
+    [customization, platformProviderIds]
   );
 
-  const getUpdatedPlatforms = () => {
-    const previouslyUpdatedPlatforms = localStorage.getItem("updatedPlatforms");
-    setUpdatedPlatforms(JSON.parse(previouslyUpdatedPlatforms || "{}"));
-  };
+  return { shouldDisplayPlatform };
+};
 
-  // update when verifications change...
-  useEffect(() => {
-    // update all verfied states
-    setSelectedProviders(
-      PLATFORMS.reduce((plaforms, platform) => {
-        // get all providerIds for this platform
-        const providerIds =
-          STAMP_PROVIDERS[platform.platform]?.reduce((all, stamp) => {
-            return all.concat(stamp.providers?.map((provider) => provider.name as PROVIDER_ID));
-          }, [] as PROVIDER_ID[]) || [];
-        // default to empty array for each platform
-        plaforms[platform.platform] = providerIds.filter(
+export const CardList = ({ className, isLoading = false, initialOpen = true }: CardListProps): JSX.Element => {
+  const { allProvidersState } = useContext(CeramicContext);
+  const { scoredPlatforms } = useContext(ScorerContext);
+  const { platformProviderIds, platforms, platformCatagories } = usePlatforms();
+  const { isOpen, onClose } = useDisclosure();
+  const [currentPlatform, setCurrentPlatform] = useState<PlatformScoreSpec | undefined>();
+  const { shouldDisplayPlatform } = useShouldDisplayPlatform();
+
+  const selectedProviders: SelectedProviders = useMemo(
+    () =>
+      Array.from(platforms.keys()).reduce((providers, platformId) => {
+        providers[platformId] = (platformProviderIds[platformId] || []).filter(
           (providerId) => typeof allProvidersState[providerId]?.stamp?.credential !== "undefined"
         );
-        // return all platforms
-        return plaforms;
-      }, {} as SelectedProviders)
-    );
-    getUpdatedPlatforms();
-  }, [allProvidersState]);
-  // Add the platforms to this switch so the sidebar content can populate dynamically
-  const renderCurrentPlatformSelection = () => {
-    if (currentPlatform) {
-      const platformProps = allPlatforms.get(currentPlatform.platform);
-      if (platformProps) {
-        return (
-          <GenericPlatform
-            platform={platformProps.platform}
-            platFormGroupSpec={platformProps.platFormGroupSpec}
-            onClose={onClose}
-          />
-        );
-      }
-    }
-    return (
-      <SideBarContent
-        verifiedProviders={undefined}
-        selectedProviders={undefined}
-        setSelectedProviders={undefined}
-        currentPlatform={undefined}
-        currentProviders={undefined}
-        isLoading={undefined}
-        verifyButton={undefined}
-      />
-    );
-  };
+        return providers;
+      }, {} as SelectedProviders),
+    [platforms, allProvidersState, platformProviderIds]
+  );
 
-  useEffect(() => {
-    // set providers for the current platform
-    if (currentPlatform) {
-      setCurrentProviders(STAMP_PROVIDERS[currentPlatform.platform]);
-    }
-  }, [currentPlatform]);
+  const [verified, unverified] = scoredPlatforms.reduce(
+    ([verified, unverified], platform): [PlatformScoreSpec[], PlatformScoreSpec[]] => {
+      return platform.earnedPoints === 0 && (selectedProviders[platform.platform] || []).length === 0
+        ? [verified, [...unverified, platform]]
+        : [[...verified, platform], unverified];
+    },
+    [[], []] as [PlatformScoreSpec[], PlatformScoreSpec[]]
+  );
+
+  const sortedPlatforms = [
+    ...unverified.sort((a, b) => b.displayPossiblePoints - a.displayPossiblePoints),
+    ...verified.sort((a, b) => b.displayPossiblePoints - b.earnedPoints - (a.displayPossiblePoints - a.earnedPoints)),
+  ];
+
+  const groupedPlatforms: {
+    [key: string]: {
+      name: string;
+      id?: string;
+      description: string;
+      sortedPlatforms: PlatformScoreSpec[];
+    };
+  } = {};
+
+  // Generate grouped stamps
+  platformCatagories.forEach((category) => {
+    groupedPlatforms[category.name] = {
+      name: category.name,
+      id: category.id,
+      description: category.description,
+      sortedPlatforms: [],
+    };
+  });
+
+  sortedPlatforms.filter(shouldDisplayPlatform).forEach((stamp) => {
+    platformCatagories.forEach((category) => {
+      if (category.platforms.includes(stamp.platform)) {
+        groupedPlatforms[category.name].sortedPlatforms.push(stamp);
+      }
+    });
+  });
+
+  const platformProps = currentPlatform?.platform && platforms.get(currentPlatform.platform);
 
   return (
     <>
-      <PageWidthGrid nested={true}>
-        {PLATFORMS.map((platform, i) => {
-          return isLoading ? (
-            <LoadingCard key={i} className={cardClassName} />
-          ) : (
-            <PlatformCard
-              i={i}
-              key={i}
-              platform={platform}
-              btnRef={btnRef}
-              onOpen={onOpen}
-              selectedProviders={selectedProviders}
-              updatedPlatforms={updatedPlatforms}
-              getUpdatedPlatforms={getUpdatedPlatforms}
-              setCurrentPlatform={setCurrentPlatform}
-              className={cardClassName}
+      <PageWidthGrid className={className}>
+        {Object.keys(groupedPlatforms).map((category) => {
+          if (!groupedPlatforms[category].sortedPlatforms.length) return null;
+          return (
+            <Category
+              className={className}
+              category={groupedPlatforms[category]}
+              key={category}
+              isLoading={isLoading}
             />
           );
         })}
       </PageWidthGrid>
-      {/* sidebar */}
-      {currentProviders && (
-        <Drawer isOpen={isOpen} placement="right" size="sm" onClose={onClose} finalFocusRef={btnRef.current}>
-          <DrawerOverlay />
-          {renderCurrentPlatformSelection()}
-        </Drawer>
+      {platformProps && currentPlatform && (
+        <GenericPlatform
+          platform={platformProps.platform}
+          platformScoreSpec={currentPlatform}
+          platFormGroupSpec={platformProps.platFormGroupSpec}
+          isOpen={isOpen}
+          onClose={() => {
+            setCurrentPlatform(undefined);
+            onClose();
+          }}
+        />
       )}
     </>
   );

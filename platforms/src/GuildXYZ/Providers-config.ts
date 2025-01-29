@@ -1,24 +1,17 @@
-import { PlatformSpec, PlatformGroupSpec } from "../types";
+import { PlatformSpec, PlatformGroupSpec, Provider } from "../types";
+import { GuildAdminProvider, GuildPassportMemberProvider } from "./Providers/guildXYZ";
 
-export const GuildXYZPlatformDetails: PlatformSpec = {
+export const PlatformDetails: PlatformSpec = {
   icon: "./assets/guildXYZStampIcon.svg",
   platform: "GuildXYZ",
   name: "Guild Membership and Roles",
-  description: "Connect your Guild XYZ account to verify your memberships.",
+  description: "Connect to Guild to verify your membership in open source communities.",
   connectMessage: "Verify Guilds",
   isEVM: true,
+  website: "https://guild.xyz/",
 };
 
-export const GuildXYZProviderConfig: PlatformGroupSpec[] = [
-  {
-    platformGroup: "Guild Member",
-    providers: [
-      {
-        title: "Member of more than 5 guilds and more than 15 roles*",
-        name: "GuildMember",
-      },
-    ],
-  },
+export const ProviderConfig: PlatformGroupSpec[] = [
   {
     platformGroup: "Guild Admin",
     providers: [
@@ -30,8 +23,8 @@ export const GuildXYZProviderConfig: PlatformGroupSpec[] = [
   },
   {
     platformGroup: "Guild Passport Member",
-    providers: [{ title: "Member with 1 or more roles in Gitcoin Passport Guild", name: "GuildPassportMember" }],
+    providers: [{ title: "Member with 1 or more roles in Passport Guild", name: "GuildPassportMember" }],
   },
 ];
 
-// TODO: allow adding additional content to the side panel: Stake your GTC on the new Identity Staking site.
+export const providers: Provider[] = [new GuildAdminProvider(), new GuildPassportMemberProvider()];

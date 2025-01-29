@@ -24,7 +24,7 @@ type StepComponentProps = {
 
 export const completedIcon = (src: string) => (
   <span className="step-icon step-icon-completed flex h-9 items-center">
-    <span className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full bg-teal-600">
+    <span className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full">
       <img alt="completed icon" className="sticky top-0 h-6" src={src} />
     </span>
   </span>
@@ -78,7 +78,7 @@ function StepComponent({ step, isLastStep, error }: StepComponentProps) {
   return (
     <li className="relative m-2" data-testid={`step-${step.name}`}>
       {!isLastStep && (
-        <div className={`absolute top-4 left-4 -ml-px mt-0.5 h-full w-0.5 bg-indigo-600`} aria-hidden="true" />
+        <div className={`absolute left-4 top-4 -ml-px mt-0.5 h-full w-0.5 bg-indigo-600`} aria-hidden="true" />
       )}
 
       <div className="group relative flex items-start">

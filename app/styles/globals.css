@@ -1,4 +1,9 @@
-@import url("https://fonts.googleapis.com/css?family=Libre+Franklin:400,600|Miriam+Libre:400|Baskervville:400");
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Unbounded:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+
+/* This sources Adobe CC fonts */
+@import url("https://use.typekit.net/tdl1ktm.css");
 
 @tailwind base;
 @tailwind components;
@@ -6,29 +11,11 @@
 
 @layer components {
   .verify-btn {
-    @apply w-full border-t border-accent-2 p-3 hover:text-accent-3;
+    @apply w-full border-t border-accent-2 p-2 hover:text-accent-3;
   }
   .verify-btn:disabled {
     @apply text-gray-400;
   }
-  .sidebar-verify-btn {
-    @apply mt-10 w-full rounded-md bg-accent py-2 text-white hover:bg-muted hover:text-background;
-  }
-  .sidebar-verify-btn:disabled {
-    @apply bg-muted text-background;
-  }
-
-  .secondary-btn {
-    @apply border border-accent-2 text-white;
-  }
-}
-
-.font-libre-franklin {
-  font-family: "Libre Franklin";
-}
-
-.font-miriam-libre {
-  font-family: "Miriam Libre";
 }
 
 .step-icon-inner {
@@ -45,20 +32,42 @@
 :root {
   --onboard-shadow-3: none;
   --account-center-position-top: -14px;
-  --account-center-position-right: 4.1rem;
+  --account-center-position-right: 8.5rem;
   --account-center-border-radius: 16px;
   --onboard-action-required-btn-text-color: #fff;
+  --onboard-font-family-normal: var(--font-body);
+}
+
+body {
+  background-color: rgb(var(--color-background)) !important;
+}
+
+.override-text-color * {
+  color: inherit !important;
 }
 
 @media (max-width: 1020px /* md */) {
   :root {
-    --account-center-position-right: 24px;
+    --account-center-position-right: 80px;
   }
 }
 
 @media (max-width: 480px /* base */) {
   :root {
-    --account-center-position-right: 0px;
+    --account-center-position-right: 60px;
     --onboard-modal-top: 0;
   }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rotate {
+  animation: rotate 500ms linear infinite;
 }

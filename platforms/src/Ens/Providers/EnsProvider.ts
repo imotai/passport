@@ -1,13 +1,16 @@
-import { StaticJsonRpcProvider } from "@ethersproject/providers";
 // ----- Types
-import type { Provider, ProviderOptions } from "../../types";
+import { ProviderExternalVerificationError, type Provider, type ProviderOptions } from "../../types";
 import type { RequestPayload, VerifiedPayload } from "@gitcoin/passport-types";
-
-// ----- Ethers library
-import { utils } from "ethers";
 
 // ----- Credential verification
 import { getRPCProvider } from "../../utils/signer";
+
+const ENS_PUBLIC_RESOLVERS = [
+  "0x231b0ee14048e9dccd1d247744d114a4eb5e8e63",
+  "0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41",
+];
+
+const RPC_URL = process.env.RPC_URL;
 
 // Export a Ens Provider to carry out Ens name check and return a record object
 export class EnsProvider implements Provider {
@@ -23,28 +26,38 @@ export class EnsProvider implements Provider {
 
   // Verify that the address defined in the payload has an ENS reverse lookup registered
   async verify(payload: RequestPayload): Promise<VerifiedPayload> {
+    const errors = [];
+    let valid = false,
+      reportedName: string,
+      record = undefined;
+
     try {
-      const provider = getRPCProvider(payload);
+      const provider = getRPCProvider(RPC_URL);
+      reportedName = await provider.lookupAddress(payload.address);
 
-      const reportedName = await provider.lookupAddress(payload.address);
-      if (!reportedName) return { valid: false, error: ["Ens name was not found for given address."] };
-
-      // lookup the address resolved to an ens name
-      const resolvedAddress = await provider.resolveName(reportedName);
-
-      // if the addresses match this is a valid ens lookup
-      const valid = utils.getAddress(payload.address) === utils.getAddress(resolvedAddress);
+      if (reportedName) {
+        const resolver = await provider.getResolver(reportedName);
+        if (ENS_PUBLIC_RESOLVERS.includes(resolver?.address?.toLowerCase())) {
+          valid = true;
+          record = {
+            ens: reportedName,
+          };
+        } else {
+          errors.push(
+            "Apologies! Your primary ENS name uses an alternative resolver and is not eligible for the ENS stamp."
+          );
+        }
+      } else {
+        errors.push("Primary ENS name was not found for given address.");
+      }
 
       return {
-        valid: valid,
-        record: {
-          ens: valid ? reportedName : undefined,
-        },
+        valid,
+        errors,
+        record,
       };
-    } catch (e) {
-      return {
-        valid: false,
-      };
+    } catch (e: unknown) {
+      throw new ProviderExternalVerificationError(`Error verifying ENS name: ${String(e)}`);
     }
   }
 }

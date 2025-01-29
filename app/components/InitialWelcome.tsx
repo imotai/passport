@@ -1,72 +1,107 @@
 import { useState } from "react";
 import { WelcomeWrapper } from "./WelcomeWrapper";
-import { useNavigate } from "react-router-dom";
+import { useNavigateToPage } from "../hooks/useCustomization";
 
-const welcomeSteps = [
-  {
-    header: "Welcome to Gitcoin Passport!",
-    subHeader: "Privacy-First Verification",
-    body: "The non-doxxing identity aggregator that combines multiple sybil prevention mechanisms to prove your unique humanity and build your reputation.",
-    imgSrc: "./assets/welcome.png",
-  },
-  {
-    header: "Introducing Passport Scoring",
-    subHeader: "Get Your Unique Humanity Score",
-    body: "Think of your score as a trampoline that launches you to your destination. As your score increases, communities more easily trust that you are a unique human.",
-    imgSrc: "./assets/welcome-passport-scoring.png",
-  },
-  {
-    header: "Get Started",
-    subHeader: "One-Click Verification",
-    body: "You can now verify most web3 stamps with one-click verification! For Web2 stamps, please verify them through your Passport dashboard, and we encourage you to collect as many stamps as possible.",
-    imgSrc: "./assets/welcome-get-started.png",
-  },
-];
-
-const stepIndicator = (step: number) => {
-  const steps = welcomeSteps.map((_, i) => {
-    const active = i === step ? "border-4 border-muted h-4 w-4" : "w-2.5 h-2.5 mt-0.5";
-    return <div key={i} className={`mx-4 rounded-full bg-accent ${active}`} />;
-  });
-  return <div className="ml-3 flex justify-center">{steps}</div>;
-};
-
-export const InitialWelcome = ({ onBoardFinished }: { onBoardFinished: () => void }) => {
+export const InitialWelcome = ({
+  onBoardFinished,
+  hasPassports,
+}: {
+  onBoardFinished: () => void;
+  hasPassports: boolean;
+}) => {
   const [step, setStep] = useState(0);
-  const navigate = useNavigate();
 
-  return (
-    <WelcomeWrapper content={welcomeSteps[step]}>
-      <div className="flex w-full flex-col">
-        <div className="mb-5 flex w-full items-center justify-center">
-          Step {step + 1} of {welcomeSteps.length} {stepIndicator(step)}
-        </div>
-        <div className="flex w-full justify-end">
-          {step === 2 && (
-            <button
-              className="secondary-btn mr-2  w-1/2 rounded-sm py-2 px-6"
-              onClick={() => {
-                setStep(0);
-                navigate("/dashboard");
-              }}
-            >
-              Skip For Now
-            </button>
-          )}
-          <button
-            className="ml-2 w-1/2 rounded-sm bg-accent py-2 px-6"
-            onClick={() => {
-              if (step + 1 === welcomeSteps.length) {
-                onBoardFinished();
-              } else {
-                setStep(step + 1);
-              }
-            }}
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    </WelcomeWrapper>
-  );
+  const navigateToPage = useNavigateToPage();
+  const welcomeStepsNewUser = [
+    {
+      header: "Build Your Passport Score",
+      backgroudIconSrc: "./assets/passportBackgroundLogo.svg",
+      stampIcon: "./assets/gitcoin-flower.svg",
+      scoreIcon: "./assets/passport_score.svg",
+      body: "Your Passport Score verifies your Web3 and Web2 presence, opening up a realm of possibilities as you accumulate Stamps and build your score. A higher score equals greater trust, paving the way for you to engage with community programs and governance.",
+      stepsConfig: {
+        current: 1,
+        total: 3,
+      },
+      buttonsConfig: {
+        skipButtonText: "Skip",
+        onSkip: () => {
+          navigateToPage("dashboard");
+        },
+        onNext: () => setStep(1),
+      },
+    },
+    {
+      header: "Accumulate Verified Stamps",
+      body: "Stamps affirm your identity and are key to accessing Web3's offerings. They are akin to digital visas, each one from a different verifier, showcasing your active participation. To obtain a Stamp, follow the specific verifier's process. Each Stamp you collect has a 90-day validity, symbolizing your ongoing engagement and ensuring the Passport's integrity.",
+      backgroudIconSrc: "./assets/passportBackgroundLogo.svg",
+      stampIcon: "./assets/stamp-cards.svg",
+      displayPlatformCard: true,
+      stepsConfig: {
+        current: 2,
+        total: 3,
+      },
+      buttonsConfig: {
+        skipButtonText: "Back",
+        onSkip: () => setStep(0),
+        onNext: () => setStep(2),
+      },
+    },
+    {
+      header: "Get verified with one simple step",
+      backgroudIconSrc: "./assets/passportBackgroundLogo.svg",
+      stampIcon: "./assets/passport-flash.svg",
+      body: (
+        <p>
+          <span className="text-color-6 font-bold">Verify your identity with just one click.</span> Our system will
+          check your ETH account for activities that match our Stamp criteria. This quick verification is your first
+          step into a broader Web3 world, giving you immediate access to what you qualify for today. To keep up with our
+          90 day default expiry period for Stamps, you can re-verify whenever you need.
+        </p>
+      ),
+      stepsConfig: {
+        current: 3,
+        total: 3,
+      },
+      buttonsConfig: {
+        skipButtonText: "Back",
+        onSkip: () => setStep(1),
+        displaySkipBtn: true,
+        onNext: () => onBoardFinished(),
+        nextButtonText: "Verify",
+        showSkipNextTime: false,
+      },
+    },
+  ];
+
+  const welcomeStepsReturningUser = [
+    {
+      header: "Auto refresh",
+      backgroudIconSrc: "./assets/passportBackgroundLogo.svg",
+      stampIcon: "./assets/passport-flash.svg",
+      body: (
+        <p>
+          <span className="text-color-6 font-bold">Verify your identity with just one click.</span> Our system will
+          check your ETH account for activities that match our Stamp criteria. This quick verification is your first
+          step into a broader Web3 world, giving you immediate access to what you qualify for today. To keep up with our
+          90 day default expiry period for Stamps, you can re-verify whenever you need.
+        </p>
+      ),
+      buttonsConfig: {
+        skipButtonText: "Back",
+        onSkip: () => setStep(1),
+        displaySkipBtn: false,
+        onNext: () => onBoardFinished(),
+        nextButtonText: "Get Started",
+        showSkipNextTime: true,
+      },
+    },
+  ];
+
+  const welcomeSteps = hasPassports ? welcomeStepsReturningUser : welcomeStepsNewUser;
+
+  const content = welcomeSteps[step];
+  const body = content?.body;
+
+  return <WelcomeWrapper content={content}>{body}</WelcomeWrapper>;
 };

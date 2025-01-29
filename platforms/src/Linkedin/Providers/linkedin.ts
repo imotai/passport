@@ -1,16 +1,25 @@
 // ----- Types
 import type { RequestPayload, VerifiedPayload } from "@gitcoin/passport-types";
-import type { Provider, ProviderOptions } from "../../types";
+import { ProviderExternalVerificationError, type Provider, type ProviderOptions } from "../../types";
+
+// ----- Libs
 import axios from "axios";
+
+// ----- Utils
+import { handleProviderAxiosError } from "../../utils/handleProviderAxiosError";
 
 export type LinkedinTokenResponse = {
   access_token: string;
 };
 
 export type LinkedinFindMyUserResponse = {
-  id?: string;
-  firstName?: string;
-  lastName?: string;
+  sub?: string;
+  email_verified?: boolean;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  email?: string;
+  error?: string;
 };
 
 // Export a Linkedin Provider to carry out OAuth and return a record object
@@ -28,61 +37,89 @@ export class LinkedinProvider implements Provider {
 
   // verify that the proof object contains valid === "true"
   async verify(payload: RequestPayload): Promise<VerifiedPayload> {
+    const errors = [];
     let valid = false,
-      verifiedPayload: LinkedinFindMyUserResponse = {};
+      verifiedPayload: LinkedinFindMyUserResponse = {},
+      record = undefined;
 
     try {
       if (payload.proofs) {
         verifiedPayload = await verifyLinkedin(payload.proofs.code);
-      }
-    } catch (e) {
-      return { valid: false };
-    } finally {
-      valid = verifiedPayload && verifiedPayload.id ? true : false;
-    }
+        valid = verifiedPayload && verifiedPayload.sub && verifiedPayload.email_verified ? true : false;
 
-    return {
-      valid: valid,
-      record: {
-        id: verifiedPayload.id,
-      },
-    };
+        if (valid) {
+          record = {
+            sub: verifiedPayload.sub,
+          };
+        } else {
+          errors.push(`We were unable to verify your LinkedIn account -- LinkedIn Account Valid: ${String(valid)}.`);
+        }
+      } else {
+        errors.push(verifiedPayload.error);
+      }
+      return {
+        valid,
+        record,
+        errors,
+      };
+    } catch (e: unknown) {
+      throw new ProviderExternalVerificationError(`LinkedIn Account verification error: ${JSON.stringify(e)}.`);
+    }
   }
 }
 
 const requestAccessToken = async (code: string): Promise<string> => {
-  const clientId = process.env.LINKEDIN_CLIENT_ID;
-  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  try {
+    const clientId = process.env.LINKEDIN_CLIENT_ID_V2;
+    const clientSecret = process.env.LINKEDIN_CLIENT_SECRET_V2;
+    const redirectUri = process.env.LINKEDIN_CALLBACK;
+    const tokenUrl = "https://www.linkedin.com/oauth/v2/accessToken";
 
-  const tokenRequest = await axios.post(
-    `https://www.linkedin.com/oauth/v2/accessToken?grant_type=authorization_code&code=${code}&client_id=${clientId}&client_secret=${clientSecret}&redirect_uri=${process.env.LINKEDIN_CALLBACK}`,
-    {},
-    {
-      headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+    });
+
+    const url = `${tokenUrl}?${params.toString()}`;
+
+    const tokenRequest = await axios.post(
+      url,
+      {},
+      {
+        headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      }
+    );
+    if (tokenRequest.status != 200) {
+      throw `Post for request returned status code ${tokenRequest.status} instead of the expected 200`;
     }
-  );
 
-  if (tokenRequest.status != 200) {
-    throw `Post for request returned status code ${tokenRequest.status} instead of the expected 200`;
+    const tokenResponse = tokenRequest.data as LinkedinTokenResponse;
+
+    return tokenResponse.access_token;
+  } catch (e: unknown) {
+    handleProviderAxiosError(e, "LinkedIn access token request");
+    return String(e);
   }
-
-  const tokenResponse = tokenRequest.data as LinkedinTokenResponse;
-
-  return tokenResponse.access_token;
 };
 
 const verifyLinkedin = async (code: string): Promise<LinkedinFindMyUserResponse> => {
-  // retrieve user's auth bearer token to authenticate client
-  const accessToken = await requestAccessToken(code);
+  try {
+    // retrieve user's auth bearer token to authenticate client
+    const accessToken = await requestAccessToken(code);
+    // Now that we have an access token fetch the user details
+    const userRequest = await axios.get("https://api.linkedin.com/v2/userinfo", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Linkedin-Version": 202305,
+      },
+    });
 
-  // Now that we have an access token fetch the user details
-  const userRequest = await axios.get("https://api.linkedin.com/v2/me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (userRequest.status != 200) {
-    throw `Get user request returned status code ${userRequest.status} instead of the expected 200`;
+    return userRequest.data as LinkedinFindMyUserResponse;
+  } catch (e: unknown) {
+    handleProviderAxiosError(e, "LinkedIn verification", [code]);
+    return e;
   }
-
-  return userRequest.data as LinkedinFindMyUserResponse;
 };

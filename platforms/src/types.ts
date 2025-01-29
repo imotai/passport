@@ -1,6 +1,9 @@
 /* eslint-disable */
 import { ProviderContext, RequestPayload, VerifiedPayload } from "@gitcoin/passport-types";
 
+import { PLATFORM_ID, PROVIDER_ID } from "@gitcoin/passport-types";
+import { Platform as PlatformClass } from "./utils/platform";
+
 export type PlatformSpec = {
   icon?: string | undefined;
   platform: PLATFORM_ID;
@@ -9,19 +12,44 @@ export type PlatformSpec = {
   connectMessage: string;
   isEVM?: boolean;
   enablePlatformCardUpdate?: boolean;
+  website?: string;
 };
 
 export type ProviderSpec = {
   title: string;
   name: PROVIDER_ID;
+  hash?: string;
   icon?: string;
   description?: string;
+  isDeprecated?: boolean;
 };
 
 export type PlatformGroupSpec = {
   providers: ProviderSpec[];
   platformGroup: string;
 };
+
+class ProviderVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    if (this.constructor === ProviderVerificationError) {
+      throw new Error("ProviderVerificationError is an abstract class and cannot be instantiated directly.");
+    }
+    this.name = this.constructor.name;
+  }
+}
+
+export class ProviderExternalVerificationError extends ProviderVerificationError {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+export class ProviderInternalVerificationError extends ProviderVerificationError {
+  constructor(message: string) {
+    super(message);
+  }
+}
 
 // IAM Types
 
@@ -48,6 +76,8 @@ export type AccessTokenResult = {
 
 export type ProviderPayload = Record<string, unknown>;
 
+export type CacheToken = string;
+
 export type AppContext = {
   state: string;
   window: {
@@ -59,117 +89,26 @@ export type AppContext = {
   };
   userDid?: string;
   callbackUrl?: string;
-  waitForRedirect(timeout?: number): Promise<ProviderPayload>;
+  selectedProviders: PROVIDER_ID[]; // can be used to translate to a scope when making an oauth request
+  waitForRedirect(platform: PlatformClass, timeout?: number): Promise<ProviderPayload>;
+};
+
+export type PlatformBanner = {
+  heading?: React.ReactNode;
+  content?: React.ReactNode;
+  cta?: {
+    label: string;
+    url: string;
+  };
 };
 
 export interface Platform {
   platformId: string;
   path?: string;
-  banner?: {
-    heading?: string;
-    content?: string;
-    cta?: {
-      label: string;
-      url: string;
-    };
-  };
+  banner?: PlatformBanner;
   isEVM?: boolean;
-  // TODO: shall we drop the getOAuthUrl and getProviderProof, given that we have getProviderPayload
   getOAuthUrl?(state: string): Promise<string>;
-  getProviderProof?(): Promise<AccessTokenResult>;
   getProviderPayload(appContext: AppContext): Promise<ProviderPayload>;
 }
 
 export type PlatformOptions = Record<string, unknown>;
-
-export type PLATFORM_ID =
-  | "Google"
-  | "Ens"
-  | "Poh"
-  | "Twitter"
-  | "POAP"
-  | "Facebook"
-  | "Brightid"
-  | "Github"
-  | "Gitcoin"
-  | "Linkedin"
-  | "Discord"
-  | "GitPOAP"
-  | "Signer"
-  | "Snapshot"
-  | "ETH"
-  | "GTC"
-  | "GtcStaking"
-  | "NFT"
-  | "ZkSync"
-  | "Lens"
-  | "GnosisSafe"
-  | "Coinbase"
-  | "GuildXYZ";
-
-export type PROVIDER_ID =
-  | "Signer"
-  | "Google"
-  | "Ens"
-  | "Poh"
-  | "Twitter"
-  | "TwitterTweetGT10"
-  | "TwitterFollowerGT100"
-  | "TwitterFollowerGT500"
-  | "TwitterFollowerGTE1000"
-  | "TwitterFollowerGT5000"
-  | "POAP"
-  | "Facebook"
-  | "FacebookProfilePicture"
-  | "Brightid"
-  | "Github"
-  | "TenOrMoreGithubFollowers"
-  | "FiftyOrMoreGithubFollowers"
-  | "ForkedGithubRepoProvider"
-  | "StarredGithubRepoProvider"
-  | "FiveOrMoreGithubRepos"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#1"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#10"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#25"
-  | "GitcoinContributorStatistics#numGrantsContributeToGte#100"
-  | "GitcoinContributorStatistics#totalContributionAmountGte#10"
-  | "GitcoinContributorStatistics#totalContributionAmountGte#100"
-  | "GitcoinContributorStatistics#totalContributionAmountGte#1000"
-  | "GitcoinContributorStatistics#numRoundsContributedToGte#1"
-  | "GitcoinContributorStatistics#numGr14ContributionsGte#1"
-  | "GitcoinGranteeStatistics#numOwnedGrants#1"
-  | "GitcoinGranteeStatistics#numGrantContributors#10"
-  | "GitcoinGranteeStatistics#numGrantContributors#25"
-  | "GitcoinGranteeStatistics#numGrantContributors#100"
-  | "GitcoinGranteeStatistics#totalContributionAmount#100"
-  | "GitcoinGranteeStatistics#totalContributionAmount#1000"
-  | "GitcoinGranteeStatistics#totalContributionAmount#10000"
-  | "GitcoinGranteeStatistics#numGrantsInEcoAndCauseRound#1"
-  | "Linkedin"
-  | "Discord"
-  | "GitPOAP"
-  | "Snapshot"
-  | "SnapshotProposalsProvider"
-  | "SnapshotVotesProvider"
-  | "ethPossessionsGte#1"
-  | "ethPossessionsGte#10"
-  | "ethPossessionsGte#32"
-  | "FirstEthTxnProvider"
-  | "EthGTEOneTxnProvider"
-  | "EthGasProvider"
-  | "gtcPossessionsGte#10"
-  | "gtcPossessionsGte#100"
-  | "SelfStakingBronze"
-  | "SelfStakingSilver"
-  | "SelfStakingGold"
-  | "CommunityStakingBronze"
-  | "CommunityStakingSilver"
-  | "CommunityStakingGold"
-  | "NFT"
-  | "ZkSync"
-  | "Lens"
-  | "GnosisSafe"
-  | "Coinbase"
-  | "GuildMember"
-  | "GuildAdmin"
-  | "GuildPassportMember";

@@ -3,6 +3,16 @@
   "version": "1.0.0",
   "license": "MIT",
   "main": "dist/commonjs/index.js",
+  "exports": {
+    ".": "./dist/commonjs/index.js"
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/commonjs/index.d.ts"
+      ]
+    }
+  },
   "directories": {
     "src": "src",
     "dist": "dist"
@@ -18,12 +28,13 @@
     "@ethersproject/base64": "^5.6.1",
     "@ethersproject/providers": "^5.6.2",
     "@gitcoin/passport-types": "^1.0.0",
-    "axios": "^0.26.1",
-    "typescript": "~4.6.3"
+    "@gitcoin/passport-platforms": "^1.0.0",
+    "axios": "^0.26.1"
   },
   "devDependencies": {
     "jest": "^27.5.1",
-    "ts-jest": "^27.1.4"
+    "ts-jest": "^27.1.4",
+    "typescript": "^5.3.3"
   },
   "scripts": {
     "clean": "rimraf dist node_modules",

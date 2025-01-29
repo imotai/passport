@@ -1,16 +1,33 @@
-import { PlatformSpec, PlatformGroupSpec } from "../types";
+import { PlatformSpec, PlatformGroupSpec, Provider } from "../types";
+import { CoinbaseProvider, CoinbaseProvider2 } from "./Providers/coinbase";
 
-export const CoinbasePlatformDetails: PlatformSpec = {
+export const PlatformDetails: PlatformSpec = {
   icon: "./assets/coinbaseStampIcon.svg",
   platform: "Coinbase",
   name: "Coinbase",
-  description: "Connect your existing account to verify with Coinbase.",
+  description: "Confirm Your Coinbase Verified ID",
   connectMessage: "Connect Account",
+  website: "https://www.coinbase.com/onchain-verify",
 };
 
-export const CoinbaseProviderConfig: PlatformGroupSpec[] = [
+export const ProviderConfig: PlatformGroupSpec[] = [
   {
-    platformGroup: "Account Name",
-    providers: [{ title: "Encrypted", name: "Coinbase" }],
+    platformGroup: "Account & Onchain Identity",
+    providers: [
+      {
+        title: "Coinbase – (Retired)",
+        description:
+          "You earned this credential before the December 2024 stamp weight updates. This will be removed when this credential expires.",
+        name: "CoinbaseDualVerification",
+        isDeprecated: true,
+      },
+      {
+        title: "Coinbase Onchain Verification",
+        description: "Verify your Coinbase ID onchain and successfully login to the Coinbase platform.",
+        name: "CoinbaseDualVerification2",
+      },
+    ],
   },
 ];
+
+export const providers: Provider[] = [new CoinbaseProvider(), new CoinbaseProvider2()];

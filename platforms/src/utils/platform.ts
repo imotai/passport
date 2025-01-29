@@ -1,4 +1,12 @@
 import { AppContext, ProviderPayload } from "../types";
+import { PROVIDER_ID } from "@gitcoin/passport-types";
+import { Platform as PlatformType, PlatformBanner } from "../types";
+
+export class PlatformPreCheckError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
 
 export type PlatformOptions = {
   platformId: string;
@@ -8,18 +16,9 @@ export type PlatformOptions = {
   state?: string;
 };
 
-export type PlatformBanner = {
-  heading?: string;
-  content?: string;
-  cta?: {
-    label: string;
-    url: string;
-  };
-};
-
-export class Platform {
-  platformId: string;
-  path: string;
+export class Platform implements PlatformType {
+  platformId = "";
+  path = "";
   clientId?: string;
   redirectUri?: string;
   state?: string;
@@ -27,7 +26,7 @@ export class Platform {
   isEVM?: boolean;
 
   async getProviderPayload(appContext: AppContext): Promise<ProviderPayload> {
-    const authUrl: string = await this.getOAuthUrl(appContext.state);
+    const authUrl: string = await this.getOAuthUrl(appContext.state, appContext.selectedProviders);
     const width = 600;
     const height = 800;
     const left = appContext.screen.width / 2 - width / 2;
@@ -40,7 +39,7 @@ export class Platform {
       `toolbar=no, location=no, directories=no, status=no, menubar=no, resizable=no, copyhistory=no, width=${width}, height=${height}, top=${top}, left=${left}`
     );
 
-    return appContext.waitForRedirect().then((data) => {
+    return appContext.waitForRedirect(this).then((data) => {
       return {
         code: data.code,
         sessionKey: data.state,
@@ -49,7 +48,7 @@ export class Platform {
     });
   }
 
-  getOAuthUrl(state?: string): Promise<string> {
+  getOAuthUrl(state?: string, providers?: PROVIDER_ID[]): Promise<string> {
     throw new Error("Method not implemented.");
   }
 }

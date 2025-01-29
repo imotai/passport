@@ -1,32 +1,72 @@
-import { PlatformSpec, PlatformGroupSpec } from "../types";
+import { PlatformSpec, PlatformGroupSpec, Provider } from "../types";
+import {
+  ETHAdvocateProvider,
+  ETHMaxiProvider,
+  ETHEnthusiastProvider,
+  EthGasSpentProvider,
+  EthDaysActiveProvider,
+  EthTransactionsProvider,
+} from "./Providers/accountAnalysis";
 
-export const ETHPlatformDetails: PlatformSpec = {
+export const PlatformDetails: PlatformSpec = {
   icon: "./assets/ethereumStampIcon.svg",
   platform: "ETH",
-  name: "ETH",
-  description: "ETH possession and transaction verification",
+  name: "Ethereum",
+  description: "Verify Ethereum activity.",
   connectMessage: "Verify Account",
   isEVM: true,
+  website:
+    "https://support.gitcoin.co/gitcoin-knowledge-base/gitcoin-passport/navigating-your-ethereum-stamp-insights-and-updates",
 };
 
-export const ETHProviderConfig: PlatformGroupSpec[] = [
+export const ProviderConfig: PlatformGroupSpec[] = [
   {
-    platformGroup: "Possessions",
+    platformGroup: "Engagement Milestones",
     providers: [
-      { title: "At least 1 ETH", name: "ethPossessionsGte#1" },
-      { title: "At least 10 ETH", name: "ethPossessionsGte#10" },
-      { title: "At least 32 ETH", name: "ethPossessionsGte#32" },
+      {
+        title: "ETH Enthusiast",
+        name: "ETHScore#50",
+        description: "Marks the initiation of engagement within the Ethereum ecosystem.",
+      },
+      {
+        title: "ETH Advocate",
+        name: "ETHScore#75",
+        description: "Represents a higher level of commitment and activity.",
+      },
+      {
+        title: "ETH Maxi",
+        name: "ETHScore#90",
+        description: "Denotes exceptional involvement and dedication.",
+      },
     ],
   },
   {
-    platformGroup: "Transactions",
+    platformGroup: "Your Ethereum Activity Metrics",
     providers: [
-      { title: "First ETH transaction occurred more than 30 days ago", name: "FirstEthTxnProvider" },
-      { title: "At least 1 ETH transaction", name: "EthGTEOneTxnProvider" },
+      {
+        title: "Spend more than 0.25 ETH on gas",
+        name: "ETHGasSpent#0.25",
+        description: "Highlights significant financial engagement with the network.",
+      },
+      {
+        title: "Execute over 100 transactions",
+        name: "ETHnumTransactions#100",
+        description: "Indicates a robust level of transactional activity.",
+      },
+      {
+        title: "Active on over 50 distinct days",
+        name: "ETHDaysActive#50",
+        description: "Showcases sustained interaction with Ethereum.",
+      },
     ],
   },
-  {
-    platformGroup: "Gas fees spent",
-    providers: [{ title: "At least 0.5 ETH in gas fees spent", name: "EthGasProvider" }],
-  },
+];
+
+export const providers: Provider[] = [
+  new ETHEnthusiastProvider(),
+  new ETHAdvocateProvider(),
+  new ETHMaxiProvider(),
+  new EthGasSpentProvider(),
+  new EthDaysActiveProvider(),
+  new EthTransactionsProvider(),
 ];

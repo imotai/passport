@@ -1,19 +1,17 @@
-import { PlatformSpec, PlatformGroupSpec } from "../types";
+import { PlatformSpec, PlatformGroupSpec, Provider } from "../types";
+import { SnapshotProposalsProvider } from "./Providers";
 
-export const SnapshotPlatformDetails: PlatformSpec = {
+export const PlatformDetails: PlatformSpec = {
   icon: "./assets/snapshotStampIcon.svg",
   platform: "Snapshot",
   name: "Snapshot",
-  description: "Connect your existing account to verify with Snapshot.",
+  description: "Connect to Snapshot to verify your DAO voting power.",
   connectMessage: "Verify Account",
   isEVM: true,
+  website: "https://snapshot.org/",
 };
 
-export const SnapshotProviderConfig: PlatformGroupSpec[] = [
-  {
-    platformGroup: "Snapshot Voter",
-    providers: [{ title: "Voted on 2 or more DAO proposals", name: "SnapshotVotesProvider" }],
-  },
+export const ProviderConfig: PlatformGroupSpec[] = [
   {
     platformGroup: "Snapshot Proposal Creator",
     providers: [
@@ -21,3 +19,5 @@ export const SnapshotProviderConfig: PlatformGroupSpec[] = [
     ],
   },
 ];
+
+export const providers: Provider[] = [new SnapshotProposalsProvider()];

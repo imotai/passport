@@ -1,10 +1,9 @@
-FROM node:16
+FROM node:20.11
 WORKDIR /usr/src
 
 COPY . .
 
-RUN yarn global add lerna
-RUN lerna bootstrap --ignore app
+RUN yarn
 
 EXPOSE 80 443
-CMD [ "node", "iam/dist/src/main.js" ]
+CMD [ "node", "iam/dist/iam/src/main.js" ]

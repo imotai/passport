@@ -1,9 +1,10 @@
+import { vi, describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { RefreshMyStampsSelector } from "../../components/RefreshMyStampsSelector";
-import { PROVIDER_ID } from "@gitcoin/passport-platforms/src/types";
+import { PROVIDER_ID } from "@gitcoin/passport-types";
 import { ValidatedProviderGroup } from "../../signer/utils";
 
-const mockSetSelectedProviders = jest.fn();
+const mockSetSelectedProviders = vi.fn();
 
 const validPlatformGroups: ValidatedProviderGroup[] = [
   {
@@ -48,7 +49,7 @@ describe("RefreshMyStampsSelector", () => {
     );
 
     const checkboxElement = screen.getByTestId(`checkbox-${validPlatformGroups[0].providers[0].name}`);
-    expect(checkboxElement).toHaveAttribute("data-checked");
+    expect(checkboxElement).toHaveAttribute("data-headlessui-state", "checked");
   });
 
   it("should disable checkboxes if platformChecked is false", () => {

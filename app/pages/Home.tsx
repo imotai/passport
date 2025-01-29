@@ -1,64 +1,73 @@
-/* eslint-disable react-hooks/exhaustive-deps, @next/next/no-img-element */
 // --- React Methods
-import React, { useEffect, useContext } from "react";
-import { useNavigate } from "react-router-dom";
-
-// --- Shared data context
-import { UserContext } from "../context/userContext";
+import React, { useEffect, useState } from "react";
 
 // --- Components
 import PageRoot from "../components/PageRoot";
-import MinimalHeader from "../components/MinimalHeader";
-import PageWidthGrid, { PAGE_PADDING } from "../components/PageWidthGrid";
-import HeaderContentFooterGrid from "../components/HeaderContentFooterGrid";
 import SIWEButton from "../components/SIWEButton";
-import { checkShowOnboard } from "../utils/helpers";
+import { isServerOnMaintenance } from "../utils/helpers";
+import { WebmVideo } from "../components/WebmVideo";
+import { DEFAULT_CUSTOMIZATION_KEY, useCustomization } from "../hooks/useCustomization";
+import WelcomeFooter from "../components/WelcomeFooter";
 
-const Footer = () => (
-  <>
-    <div className="h-20 lg:hidden" />
-    <div className="hidden h-[360px] bg-[url(/assets/backgroundRock.png)] bg-contain bg-top bg-no-repeat lg:block" />
-  </>
-);
+import { useLoginFlow } from "../hooks/useLoginFlow";
+import { AccountCenter } from "../components/AccountCenter";
+import { useAccount } from "wagmi";
 
 export default function Home() {
-  const { toggleConnection, wallet } = useContext(UserContext);
+  const { isLoggingIn, signIn, loginStep } = useLoginFlow();
+  const { isConnected } = useAccount();
+  const [enableEthBranding, setEnableEthBranding] = useState(false);
+  const customization = useCustomization();
 
-  const navigate = useNavigate();
-
-  // Route user to dashboard when wallet is connected
   useEffect(() => {
-    if (wallet) {
-      if (process.env.NEXT_PUBLIC_FF_ONE_CLICK_VERIFICATION === "on" && checkShowOnboard()) {
-        navigate("/welcome");
-      } else {
-        navigate("/dashboard");
-      }
-    }
-  }, [wallet]);
+    const usingCustomization = customization.key !== DEFAULT_CUSTOMIZATION_KEY;
+    setEnableEthBranding(!usingCustomization);
+  }, [customization.key]);
 
   return (
-    <PageRoot className="text-color-2">
-      <HeaderContentFooterGrid>
-        <div className={`${PAGE_PADDING} bg-background`}>
-          <MinimalHeader className={`border-b border-accent-2`} />
-        </div>
-        <PageWidthGrid className="mt-8 items-center">
-          <div className="col-span-4 flex flex-col items-center text-center md:col-start-2 lg:col-start-3 xl:col-span-6 xl:col-start-4">
-            <img src="/assets/gitcoinLogoType.svg" alt="Gitcoin Logo" />
-            <img src="/assets/passportLandingPageLogo.svg" alt="Passport Logo" className="pt-6" />
-            <div className="py-4 font-heading text-2xl text-color-3">Take control of your identity.</div>
-            <div className="text-base">
-              By collecting &ldquo;stamps&rdquo; of validation for your identity and online reputation, you can gain
-              access to the most trustworthy web3 experiences and maximize your ability to benefit from platforms like
-              Gitcoin Grants. The more you verify your identity, the more opportunities you will have to vote and
-              participate across the web3.
+    <PageRoot className="text-color-1 flex flex-col min-h-screen overflow-auto pb-32 md:pb-0">
+      {isConnected && <AccountCenter />}
+      <div className="flex-grow grid grid-rows-[2fr_auto_3fr] self-center p-8 overflow-auto">
+        <div className="z-10 grid grid-flow-row row-start-2 grid-cols-2 gap-4 lg:grid-flow-col p-2">
+          <div className="col-span-2 text-5xl md:text-7xl lg:row-start-2">
+            <div className="grid grid-flow-col justify-start">
+              <img src="./assets/passportLogoWhite.svg" alt="Icon" className="h-10 md:h-20 self-center" />
+              <p className="p-2">Passport</p>
             </div>
-            <SIWEButton testId="connectWalletButton" login={toggleConnection} className="mt-10" />
           </div>
-        </PageWidthGrid>
-        <Footer />
-      </HeaderContentFooterGrid>
+          <WebmVideo
+            src="/assets/splashPageLogo.webm"
+            fallbackSrc="/assets/splashPageLogoFallback.svg"
+            alt="Passport Logo"
+            className="col-span-2 w-full max-w-md lg:col-start-3 lg:row-span-6 lg:mr-8 lg:max-w-2xl"
+          />
+          <div className="col-span-2 mb-4 text-2xl leading-none text-foreground-2 md:text-5xl">
+            Unlock the best of web3
+          </div>
+          <div className="col-span-2 max-w-md text-lg lg:max-w-sm">
+            Access a world of Web3 opportunities securely with a single sign-in.
+          </div>
+          <div className="z-20 col-span-2 flex justify-center lg:justify-start items-center fixed left-0 w-full bottom-8 md:bottom-0 md:relative">
+            <SIWEButton
+              subtext={(() => {
+                if (loginStep === "PENDING_WALLET_CONNECTION") {
+                  return "Connect your wallet";
+                } else if (loginStep === "PENDING_DATABASE_CONNECTION") {
+                  return "Sign message in wallet";
+                }
+              })()}
+              loadIconPosition="right"
+              disabled={isLoggingIn || isServerOnMaintenance()}
+              isLoading={isLoggingIn}
+              enableEthBranding={enableEthBranding}
+              data-testid="connectWalletButton"
+              onClick={signIn}
+              className="col-span-2 mt-4 lg:w-3/4"
+            />
+          </div>
+        </div>
+      </div>
+      <WelcomeFooter displayPrivacyPolicy={true} />
     </PageRoot>
   );
 }

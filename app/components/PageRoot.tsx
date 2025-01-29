@@ -1,9 +1,10 @@
 import React from "react";
+import { useResetWalletConnection } from "../hooks/useResetWalletConnection";
 
-const BACKGROUND_TEXTURE = "bg-[url('/assets/backgroundTexture.svg')] bg-[top_-500px_center] bg-repeat-y";
+const PageRoot = ({ children, className }: { children: React.ReactNode; className?: string }) => {
+  useResetWalletConnection();
 
-const PageRoot = ({ children, className }: { children: React.ReactNode; className?: string }) => (
-  <div className={`bg-background font-body ${BACKGROUND_TEXTURE} ${className}`}>{children}</div>
-);
+  return <div className={`bg-background font-body ${className}`}>{children}</div>;
+};
 
 export default PageRoot;

@@ -1,161 +1,64 @@
 // --- React Methods
-import { useCallback, useContext, useEffect, useState } from "react";
-import { useRouter } from "next/router";
-
-// --- Chakra UI Elements
-import { useDisclosure, Menu, MenuButton, MenuList, MenuItem } from "@chakra-ui/react";
-import { LinkIcon, ShieldCheckIcon } from "@heroicons/react/20/solid";
-import { ChevronDownIcon } from "@heroicons/react/20/solid";
+import { useState, useContext } from "react";
 
 // --- Types
 import { PLATFORM_ID, PROVIDER_ID } from "@gitcoin/passport-types";
-import { PlatformSpec } from "@gitcoin/passport-platforms";
-import { datadogLogs } from "@datadog/browser-logs";
-import { datadogRum } from "@datadog/browser-rum";
-import { STAMP_PROVIDERS, UpdatedPlatforms } from "../config/providers";
-
-// --- Context
-import { CeramicContext } from "../context/ceramicContext";
-import { pillLocalStorage, UserContext } from "../context/userContext";
 
 // --- Components
-import { JsonOutputModal } from "./JsonOutputModal";
-import { RemoveStampModal } from "./RemoveStampModal";
-import { getStampProviderFilters } from "../config/filters";
-import { graphql_fetch } from "../utils/helpers";
-import { ethers } from "ethers";
+import { Button } from "./Button";
+import { PlatformScoreSpec } from "../context/scorerContext";
+import { CeramicContext } from "../context/ceramicContext";
+import { ProgressBar } from "./ProgressBar";
+import { getDaysToExpiration } from "../utils/duration";
+import { usePlatforms } from "../hooks/usePlatforms";
 
-type SelectedProviders = Record<PLATFORM_ID, PROVIDER_ID[]>;
+export type SelectedProviders = Record<PLATFORM_ID, PROVIDER_ID[]>;
+
+type CardVariant = "default" | "partner";
 
 type PlatformCardProps = {
   i: number;
-  platform: PlatformSpec;
-  selectedProviders: SelectedProviders;
-  updatedPlatforms: UpdatedPlatforms | undefined;
-  btnRef: React.MutableRefObject<undefined>;
+  platform: PlatformScoreSpec;
   onOpen: () => void;
-  setCurrentPlatform: React.Dispatch<React.SetStateAction<PlatformSpec | undefined>>;
-  getUpdatedPlatforms: () => void;
+  variant?: CardVariant;
+  setCurrentPlatform: React.Dispatch<React.SetStateAction<PlatformScoreSpec | undefined>>;
   className?: string;
 };
 
-export const PlatformCard = ({
-  i,
-  platform,
-  selectedProviders,
-  updatedPlatforms,
-  btnRef,
-  onOpen,
-  setCurrentPlatform,
-  getUpdatedPlatforms,
-  className,
-}: PlatformCardProps): JSX.Element => {
-  const [isOnChain, setIsOnChain] = useState(false);
-  const { wallet } = useContext(UserContext);
+type StampProps = {
+  idx: number;
+  platform: PlatformScoreSpec;
+  daysUntilExpiration?: number;
+  className?: string;
+  onClick: () => void;
+  variant?: CardVariant;
+};
 
-  // import all providers
-  const { allProvidersState, passportHasCacaoError, handleDeleteStamps } = useContext(CeramicContext);
+const variantClasses: Record<CardVariant, string> = {
+  default: "bg-gradient-to-b from-background to-background-2/70 border-foreground-6",
+  partner:
+    "bg-gradient-to-t from-background-2 to-background-3 border-background-3 shadow-[0px_0px_24px_0px] shadow-background-3",
+};
 
-  // stamp filter
-  const router = useRouter();
-  const { filter } = router.query;
-
-  // useDisclosure to control JSON modal
-  const {
-    isOpen: isOpenJsonOutputModal,
-    onOpen: onOpenJsonOutputModal,
-    onClose: onCloseJsonOutputModal,
-  } = useDisclosure();
-
-  // useDisclosure to control stamp removal modal
-  const {
-    isOpen: isOpenRemoveStampModal,
-    onOpen: onOpenRemoveStampModal,
-    onClose: onCloseRemoveStampModal,
-  } = useDisclosure();
-
-  const disabled = passportHasCacaoError;
-
-  // check on-chain status by checking if attestations exist for at least one provider of the stamp
-  const checkOnChainStatus = useCallback(async () => {
-    try {
-      if (selectedProviders[platform.platform].length === 0) return;
-
-      if (!process.env.NEXT_PUBLIC_EAS_INDEXER_URL) {
-        throw new Error("NEXT_PUBLIC_EAS_INDEXER_URL is not defined");
-      }
-
-      // get the attestions for given user
-      const res = await graphql_fetch(
-        new URL(process.env.NEXT_PUBLIC_EAS_INDEXER_URL),
-        `
-        query GetAttestations($recipient: StringFilter, $attester: StringFilter) {
-          attestations(where: {
-            recipient: $recipient,
-            attester: $attester
-          }) {
-            decodedDataJson
-            timeCreated
-          }
-        }
-      `,
-        {
-          recipient: { equals: ethers.getAddress(wallet?.accounts[0].address!) },
-          attester: { equals: process.env.NEXT_PUBLIC_GITCOIN_ATTESTER_CONTRACT_ADDRESS },
-        }
-      );
-
-      // sort the attestations by timeCreated in descending order
-      const sortedAttestations = res.data.attestations.sort((a: any, b: any) => b.timeCreated - a.timeCreated);
-
-      // find the latest timeCreated value
-      const latestTimeCreated = sortedAttestations[0]?.timeCreated;
-
-      // extract all providers with the latest timeCreated value
-      const latestProviders: string[] = [];
-      for (const attestation of sortedAttestations) {
-        const decodedData = JSON.parse(attestation.decodedDataJson);
-        const providerData = decodedData.find((data: any) => data.name === "provider");
-        if (providerData && attestation.timeCreated === latestTimeCreated) {
-          latestProviders.push(providerData.value.value);
-        }
-      }
-
-      // check if all selected providers are present in the latest bulk of providers
-      const isAllSelectedProvidersPresent = selectedProviders[platform.platform].every((provider) =>
-        latestProviders.includes(provider)
-      );
-
-      // set the on-chain status
-      setIsOnChain(isAllSelectedProvidersPresent);
-    } catch (e: any) {
-      datadogLogs.logger.error("Failed to check on-chain status", e);
-      datadogRum.addError(e);
-    }
-  }, [wallet?.accounts, selectedProviders, platform.platform]);
-
-  useEffect(() => {
-    if (process.env.NEXT_PUBLIC_FF_CHAIN_SYNC === "on") {
-      checkOnChainStatus();
-    }
-  }, [checkOnChainStatus]);
-
-  // hide platforms based on filter
-  const stampFilters = filter?.length && typeof filter === "string" ? getStampProviderFilters(filter) : false;
-  const hidePlatform = stampFilters && !Object.keys(stampFilters).includes(platform.platform);
-  if (hidePlatform) return <></>;
-
-  // Feature Flag Guild Stamp
-  if (process.env.NEXT_PUBLIC_FF_GUILD_STAMP !== "on" && platform.platform === "GuildXYZ") return <></>;
-
-  // returns a single Platform card
+const DefaultStamp = ({ idx, platform, className, onClick, variant }: StampProps) => {
   return (
-    <div className={className} key={`${platform.name}${i}`}>
-      <div className="relative flex h-full flex-col border border-accent-2 bg-background-2 p-0">
-        <div className="flex flex-row p-6">
-          <div className="flex h-10 w-10 flex-grow justify-center md:justify-start">
+    <div data-testid="platform-card" onClick={onClick} className={className} key={`${platform.name}${idx}`}>
+      <div
+        className={`group relative flex h-full cursor-pointer flex-col rounded-lg border p-0 transition-all ease-out 
+        hover:bg-opacity-100 hover:bg-gradient-to-b hover:from-transparent hover:shadow-even-md hover:border-background-3 hover:to-background-2 hover:shadow-background-3
+        ${variantClasses[variant || "default"]}`}
+      >
+        <img
+          src="./assets/card-background.svg"
+          alt=""
+          className="absolute bottom-0 right-0 opacity-0 group-hover:opacity-100"
+        />
+        <div className="m-6 flex h-full flex-col justify-between">
+          <div className="flex w-full items-center justify-between">
             {platform.icon ? (
-              <img src={platform.icon} alt={platform.name} className="h-10 w-10" />
+              <div>
+                <img src={platform.icon} alt={platform.name} className="h-10 w-10" />
+              </div>
             ) : (
               <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path
@@ -166,101 +69,274 @@ export const PlatformCard = ({
                 />
               </svg>
             )}
+            <div className={`text-right`}>
+              <h1 data-testid="available-points" className="text-2xl text-color-2">
+                {+Math.max(platform.displayPossiblePoints - platform.earnedPoints, 0).toFixed(1)}
+              </h1>
+              <p className="text-xs">Available Points</p>
+            </div>
           </div>
-          {updatedPlatforms &&
-            platform?.enablePlatformCardUpdate &&
-            updatedPlatforms[platform.name] !== true &&
-            selectedProviders[platform.platform].length > 0 && (
-              <div className="inline-flex h-6 items-center rounded-xl border border-accent-3 px-2 text-xs text-accent-3">
-                Update
-              </div>
-            )}
-        </div>
-        <div className="flex justify-center px-2 py-0 pb-6 md:block md:justify-start md:px-6">
-          <h1 className="mb-0 text-lg md:mb-3">{platform.name}</h1>
-          <p className="pleading-relaxed hidden text-color-4 md:inline-block">{platform.description}</p>
-        </div>
-        <div className="mt-auto text-color-3">
-          {selectedProviders[platform.platform].length > 0 ? (
-            <>
-              <Menu>
-                <MenuButton disabled={disabled} className="verify-btn flex" data-testid="card-menu-button">
-                  <div className="m-auto flex items-center justify-center">
-                    {process.env.NEXT_PUBLIC_FF_CHAIN_SYNC === "on" && isOnChain ? (
-                      <LinkIcon className="h-6 w-5 text-accent-3" />
-                    ) : (
-                      <></>
-                    )}
-                    <ShieldCheckIcon className="h-6 w-5 text-accent-3" />
-                    <span className="mx-2 translate-y-[1px]">Verified</span>
-                    <ChevronDownIcon className="h-6 w-6" />
-                  </div>
-                </MenuButton>
-                <MenuList style={{ marginLeft: "16px" }}>
-                  <MenuItem onClick={onOpenJsonOutputModal} data-testid="view-json">
-                    View stamp JSON
-                  </MenuItem>
-                  <MenuItem
-                    onClick={() => {
-                      setCurrentPlatform(platform);
-                      onOpen();
-                      if (platform.enablePlatformCardUpdate) {
-                        pillLocalStorage(platform.name);
-                      }
-                      getUpdatedPlatforms();
-                    }}
-                    data-testid="manage-stamp"
-                  >
-                    Manage stamp
-                  </MenuItem>
-                  <MenuItem onClick={onOpenRemoveStampModal} data-testid="remove-stamp">
-                    Remove stamp
-                  </MenuItem>
-                </MenuList>
-              </Menu>
-              <JsonOutputModal
-                isOpen={isOpenJsonOutputModal}
-                onClose={onCloseJsonOutputModal}
-                title={`${platform.name} JSON`}
-                subheading={`You can find the ${platform.name} JSON data below`}
-                jsonOutput={selectedProviders[platform.platform].map(
-                  (providerId) => allProvidersState[providerId]?.stamp?.credential
-                )}
-              />
-              <RemoveStampModal
-                isOpen={isOpenRemoveStampModal}
-                onClose={onCloseRemoveStampModal}
-                title={`Remove ${platform.name} Stamp`}
-                body={
-                  "This stamp will be removed from your Passport. You can still re-verify your stamp in the future."
-                }
-                stampsToBeDeleted={
-                  STAMP_PROVIDERS[platform.platform]?.reduce((all, stamp) => {
-                    return all.concat(stamp.providers?.map((provider) => provider.name as PROVIDER_ID));
-                  }, [] as PROVIDER_ID[]) || []
-                }
-                handleDeleteStamps={handleDeleteStamps}
-                platformId={platform.name as PLATFORM_ID}
-              />
-            </>
-          ) : (
-            <button
-              className="verify-btn"
-              disabled={disabled}
-              ref={btnRef.current}
-              onClick={(e) => {
-                if (platform.enablePlatformCardUpdate) {
-                  pillLocalStorage(platform.platform);
-                }
-                setCurrentPlatform(platform);
-                onOpen();
-              }}
+
+          <div className="mt-4 flex justify-center h-full md:mt-6 md:inline-block md:justify-start">
+            <div
+              className={`flex flex-col place-items-start text-color-2 md:flex-row ${
+                platform.name.split(" ").length > 1 ? "items-center md:items-baseline" : "items-center"
+              }`}
             >
-              {platform.connectMessage}
-            </button>
-          )}
+              <h1
+                data-testid="platform-name"
+                className={`mr-0 text-xl md:mr-4 ${platform.name.split(" ").length > 1 ? "text-left" : "text-center"}`}
+              >
+                {platform.name}
+              </h1>
+            </div>
+            <p className="flex-1 pleading-relaxed mt-2 hidden text-sm text-color-1 md:inline-block visible">
+              {platform.description}
+            </p>
+          </div>
+          <Button
+            data-testid="connect-button"
+            variant="custom"
+            className="mt-5 w-auto border bg-transparent text-foreground-2 border-foreground-2 z-10"
+          >
+            Connect
+          </Button>
         </div>
       </div>
     </div>
   );
+};
+
+const VerifiedStamp = ({ idx, platform, daysUntilExpiration, className, onClick }: StampProps) => {
+  const [hovering, setHovering] = useState(false);
+  const imgFilter = {
+    filter: `invert(27%) sepia(97%) saturate(295%) hue-rotate(113deg) brightness(${
+      hovering ? "100%" : "56%"
+    }) contrast(89%)`,
+  };
+  return (
+    <div data-testid="platform-card" onClick={onClick} className={className} key={`${platform.name}${idx}`}>
+      <div
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+        className="group relative flex h-full cursor-pointer flex-col rounded-lg border p-0 transition-all ease-out
+        hover:bg-opacity-100 hover:bg-gradient-to-b hover:from-transparent hover:shadow-even-md
+        border-foreground-5 hover:border-foreground-4 hover:to-foreground-5/70 hover:shadow-foreground-4
+        bg-gradient-to-b from-background to-foreground-5/40"
+      >
+        <div className="m-6 flex h-full flex-col justify-between">
+          <div className="flex w-full items-center justify-between">
+            {platform.icon ? (
+              <div style={imgFilter}>
+                <img src={platform.icon} alt={platform.name} className="h-10 w-10 grayscale" />
+              </div>
+            ) : (
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M24.7999 24.8002H28.7999V28.8002H24.7999V24.8002ZM14 24.8002H18V28.8002H14V24.8002ZM3.19995 24.8002H7.19995V28.8002H3.19995V24.8002ZM24.7999 14.0002H28.7999V18.0002H24.7999V14.0002ZM14 14.0002H18V18.0002H14V14.0002ZM3.19995 14.0002H7.19995V18.0002H3.19995V14.0002ZM24.7999 3.2002H28.7999V7.2002H24.7999V3.2002ZM14 3.2002H18V7.2002H14V3.2002ZM3.19995 3.2002H7.19995V7.2002H3.19995V3.2002Z"
+                  fill="var(--color-muted)"
+                />
+              </svg>
+            )}
+            <div className="bg-foreground-4 px-2 py-1 rounded text-right font-alt text-black">
+              <p className="text-xs" data-testid="verified-label">
+                Verified
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-center h-full md:mt-6 md:inline-block md:justify-start">
+            <div
+              className={`flex flex-col place-items-start text-color-2 md:flex-row ${
+                platform.name.split(" ").length > 1 ? "items-center md:items-baseline" : "items-center"
+              }`}
+            >
+              <h1
+                data-testid="platform-name"
+                className={`mr-0 text-xl md:mr-4 ${platform.name.split(" ").length > 1 ? "text-left" : "text-center"}`}
+              >
+                {platform.name}
+              </h1>
+            </div>
+            <p className="flex-1 pleading-relaxed mt-2 hidden text-sm text-color-1 md:inline-block invisible">
+              {platform.description}
+            </p>
+          </div>
+
+          <div className="text-color-6">Points gained</div>
+          <div className="text-2xl font-bold">{+platform.earnedPoints.toFixed(1)}</div>
+          <ProgressBar
+            pointsGained={platform.earnedPoints}
+            pointsAvailable={Math.max(platform.displayPossiblePoints - platform.earnedPoints, 0)}
+            isSlim={true}
+          />
+        </div>
+        <div className="flex items-center mt-5 px-4 py-2 border-t border-foreground-4">
+          <div className="flex-none">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path
+                d="M12 6C12 6.78793 11.8448 7.56815 11.5433 8.2961C11.2417 9.02405 10.7998 9.68549 10.2426 10.2426C9.68549 10.7998 9.02405 11.2417 8.2961 11.5433C7.56815 11.8448 6.78793 12 6 12L6 6H12Z"
+                fill="#C1F6FF"
+              />
+              <circle cx="6" cy="6" r="5.5" stroke="#C1F6FF" />
+            </svg>
+          </div>
+          <div className="flex-1 pl-2 text-foreground-2 override-text-color">
+            {daysUntilExpiration} {daysUntilExpiration === 1 ? "day" : "days"} until Stamps expire
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ExpiredStamp = ({ idx, platform, daysUntilExpiration, className, onClick }: StampProps) => {
+  const [hovering, setHovering] = useState(false);
+  const imgFilter = {
+    filter: `invert(27%) sepia(97%) saturate(295%) hue-rotate(113deg) brightness(${
+      hovering ? "100%" : "56%"
+    }) contrast(89%)`,
+  };
+  return (
+    <div data-testid="platform-card" onClick={onClick} className={className} key={`${platform.name}${idx}`}>
+      <div
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+        className="group relative flex h-full cursor-pointer flex-col rounded-lg border border-background-5 p-0 transition-all ease-out
+        bg-gradient-to-b from-background to-background-5/30
+        hover:bg-opacity-100 hover:from-transparent hover:shadow-even-md hover:border-background-5 hover:to-background-5/60 hover:shadow-background-5"
+      >
+        <div className="m-6 flex h-full flex-col justify-between">
+          <div className="flex w-full items-center justify-between">
+            {platform.icon ? (
+              <div style={imgFilter}>
+                <img src={platform.icon} alt={platform.name} className="h-10 w-10 grayscale" />
+              </div>
+            ) : (
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M24.7999 24.8002H28.7999V28.8002H24.7999V24.8002ZM14 24.8002H18V28.8002H14V24.8002ZM3.19995 24.8002H7.19995V28.8002H3.19995V24.8002ZM24.7999 14.0002H28.7999V18.0002H24.7999V14.0002ZM14 14.0002H18V18.0002H14V14.0002ZM3.19995 14.0002H7.19995V18.0002H3.19995V14.0002ZM24.7999 3.2002H28.7999V7.2002H24.7999V3.2002ZM14 3.2002H18V7.2002H14V3.2002ZM3.19995 3.2002H7.19995V7.2002H3.19995V3.2002Z"
+                  fill="var(--color-muted)"
+                />
+              </svg>
+            )}
+            <div className="bg-background-5 px-2 py-1 rounded text-right font-alt text-black">
+              <p className="text-xs" data-testid="expired-label">
+                Expired
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-center h-full md:mt-6 md:inline-block md:justify-start">
+            <div
+              className={`flex flex-col place-items-start text-color-2 md:flex-row ${
+                platform.name.split(" ").length > 1 ? "items-center md:items-baseline" : "items-center"
+              }`}
+            >
+              <h1
+                data-testid="platform-name"
+                className={`mr-0 text-xl md:mr-4 ${platform.name.split(" ").length > 1 ? "text-left" : "text-center"}`}
+              >
+                {platform.name}
+              </h1>
+            </div>
+            <p className="flex-1 pleading-relaxed mt-2 hidden text-sm text-color-1 md:inline-block invisible">
+              {platform.description}
+            </p>
+          </div>
+
+          <div className="text-color-6">Points gained</div>
+          <div className="text-2xl font-bold">{+platform.earnedPoints.toFixed(1)}</div>
+          <ProgressBar
+            pointsGained={platform.earnedPoints}
+            pointsAvailable={Math.max(platform.displayPossiblePoints - platform.earnedPoints, 0)}
+            isSlim={true}
+          />
+        </div>
+        <Button
+          data-testid="update-button"
+          variant="custom"
+          className="mb-5 mx-5 w-auto border bg-transparent border-background-5 text-color-7 z-10"
+        >
+          Update
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+export const PlatformCard = ({
+  i,
+  platform,
+  onOpen,
+  setCurrentPlatform,
+  className,
+  variant,
+}: PlatformCardProps): JSX.Element => {
+  const { platformExpirationDates, expiredPlatforms, allProvidersState } = useContext(CeramicContext);
+  const { platformSpecs, platformProviderIds } = usePlatforms();
+
+  const selectedProviders = platformSpecs.reduce((platforms, platform) => {
+    const providerIds = platformProviderIds[platform.platform] || [];
+    platforms[platform.platform] = providerIds.filter(
+      (providerId) => typeof allProvidersState[providerId]?.stamp?.credential !== "undefined"
+    );
+    return platforms;
+  }, {} as SelectedProviders);
+
+  const isExpired: boolean = platform.platform in expiredPlatforms;
+
+  const daysUntilExpiration = getDaysToExpiration({
+    expirationDate: platformExpirationDates[platform.platform as PLATFORM_ID] || "",
+  });
+
+  const verified = platform.earnedPoints > 0 || selectedProviders[platform.platform].length > 0;
+  // returns a single Platform card
+  let stamp = null;
+  if (verified && isExpired) {
+    stamp = (
+      <ExpiredStamp
+        idx={i}
+        platform={platform}
+        className={className}
+        onClick={() => {
+          setCurrentPlatform(platform);
+          onOpen();
+        }}
+      />
+    );
+  } else if (verified) {
+    // The not-verified & not-expired state of the card
+    stamp = (
+      <VerifiedStamp
+        idx={i}
+        platform={platform}
+        daysUntilExpiration={daysUntilExpiration}
+        className={className}
+        onClick={() => {
+          setCurrentPlatform(platform);
+          onOpen();
+        }}
+      />
+    );
+  } else {
+    stamp = (
+      <DefaultStamp
+        variant={variant}
+        idx={i}
+        platform={platform}
+        className={className}
+        onClick={() => {
+          setCurrentPlatform(platform);
+          onOpen();
+        }}
+      />
+    );
+  }
+
+  return stamp;
 };

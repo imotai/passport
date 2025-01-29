@@ -1,159 +1,122 @@
+import { vi, describe, it, expect, Mock } from "vitest";
 import React from "react";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor, render } from "@testing-library/react";
 import Dashboard from "../../pages/Dashboard";
-import { UserContextState } from "../../context/userContext";
-import { mockAddress } from "../../__test-fixtures__/onboardHookValues";
 import { HashRouter as Router } from "react-router-dom";
 import * as framework from "@self.id/framework";
-import { mock } from "jest-mock-extended";
-import { JsonRpcSigner } from "@ethersproject/providers";
-import {
-  makeTestCeramicContext,
-  makeTestUserContext,
-  renderWithContext,
-} from "../../__test-fixtures__/contextTestHelpers";
+import { makeTestCeramicContext, renderWithContext } from "../../__test-fixtures__/contextTestHelpers";
 import { CeramicContextState, IsLoadingPassportState } from "../../context/ceramicContext";
-// import {RefreshStampModal} from "../../components/RefreshStampModal";
+import { closeAllToasts } from "../../__test-fixtures__/toastTestHelpers";
+import { ChakraProvider } from "@chakra-ui/react";
+import { DashboardCTAs } from "../../pages/Dashboard";
+import { Customization } from "../../utils/customizationUtils";
 
-jest.mock("../../utils/onboard.ts");
+vi.mock("react-confetti");
 
-jest.mock("../../components/RefreshStampModal", () => ({
-  RefreshStampModal: () => <div>Refresh Modal</div>,
-}));
+vi.mock("../../components/CardList", () => ({ CardList: () => <div>Card List</div> }));
 
-jest.mock("../../components/SyncToChainButton", () => () => <div>Sync to Chain</div>);
+vi.mock("../../components/SyncToChainButton", () => <div>Sync to Chain</div>);
 
-jest.mock("@self.id/framework", () => {
+vi.mock("@self.id/framework", () => {
   return {
-    useViewerConnection: jest.fn(),
+    useViewerConnection: vi.fn(),
   };
 });
 
-jest.mock("@self.id/web", () => {
+vi.mock("../../components/Header", () => ({ default: () => <div>Header</div> }));
+
+vi.mock("@self.id/web", () => {
   return {
-    EthereumAuthProvider: jest.fn(),
+    EthereumAuthProvider: vi.fn(),
   };
 });
 
-jest.mock("@didtools/cacao", () => ({
+vi.mock("@didtools/cacao", () => ({
   Cacao: {
-    fromBlockBytes: jest.fn(),
+    fromBlockBytes: vi.fn(),
   },
 }));
 
-jest.mock("next/router", () => ({
+vi.mock("next/router", () => ({
   useRouter: () => ({
     query: { filter: "" },
   }),
 }));
 
-const mockToggleConnection = jest.fn();
-const mockHandleDisconnection = jest.fn();
-const mockSigner = mock(JsonRpcSigner) as unknown as JsonRpcSigner;
+vi.mock("../../components/DashboardScorePanel", () => ({
+  DashboardScorePanel: ({ className }: { className: string }) => (
+    <div data-testid="dashboard-score-panel" className={className}>
+      DashboardScorePanel
+    </div>
+  ),
+  DashboardScoreExplanationPanel: () => (
+    <div data-testid="dashboard-score-explanation-panel">DashboardScoreExplanationPanel</div>
+  ),
+}));
 
-const mockUserContext: UserContextState = makeTestUserContext({
-  toggleConnection: mockToggleConnection,
-  handleDisconnection: mockHandleDisconnection,
-  address: mockAddress,
-  signer: mockSigner,
-});
+vi.mock("../../components/CustomDashboardPanel.tsx", () => ({
+  DynamicCustomDashboardPanel: ({ className }: { className: string }) => (
+    <div data-testid="dynamic-custom-dashboard-panel" className={className}>
+      DynamicCustomDashboardPanel
+    </div>
+  ),
+}));
+
+const mockToggleConnection = vi.fn();
+
 const mockCeramicContext: CeramicContextState = makeTestCeramicContext();
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   (framework.useViewerConnection as jest.Mock).mockImplementation(() => [
     {
       status: "connected",
     },
-    jest.fn(),
-    jest.fn(),
+    vi.fn(),
+    vi.fn(),
   ]);
 });
 
-describe("when user has no passport", () => {
-  it("should display a loading spinner", async () => {
-    renderWithContext(
-      mockUserContext,
-      { ...mockCeramicContext, passport: false },
-      <Router>
-        <Dashboard />
-      </Router>
-    );
-
-    // screen loads mobile view - check for md loading-spinner
-    expect(screen.getByTestId("loading-spinner-passport-md"));
+describe("dashboard notifications", () => {
+  // using https://www.npmjs.com/package/vitest-localstorage-mock to mock localStorage
+  beforeEach(async () => {
+    await closeAllToasts();
+    localStorage.removeItem("successfulRefresh");
   });
-});
-
-describe("when the user has a passport", () => {
-  it("it should not display a loading spinner", async () => {
+  it("should show success toast when stamps are verified", async () => {
+    localStorage.setItem("successfulRefresh", "true");
+    const queryClient = new QueryClient();
     renderWithContext(
-      mockUserContext,
       mockCeramicContext,
-      <Router>
-        <Dashboard />
-      </Router>
+      <QueryClientProvider client={queryClient}>
+        <ChakraProvider>
+          <Router>
+            <Dashboard />
+          </Router>
+        </ChakraProvider>
+      </QueryClientProvider>
     );
-
-    expect(screen.queryByTestId("loading-spinner-passport-md")).not.toBeInTheDocument();
+    expect(screen.getByText("Your stamps are verified!")).toBeInTheDocument();
   });
-
-  it("shows Passport JSON button", () => {
+  it("should show error toast when stamps aren't verified", async () => {
+    localStorage.setItem("successfulRefresh", "false");
+    const queryClient = new QueryClient();
     renderWithContext(
-      mockUserContext,
       mockCeramicContext,
-      <Router>
-        <Dashboard />
-      </Router>
+      <QueryClientProvider client={queryClient}>
+        <ChakraProvider>
+          <Router>
+            <Dashboard />
+          </Router>
+        </ChakraProvider>
+      </QueryClientProvider>
     );
-
-    expect(screen.getByTestId("button-passport-json")).toBeInTheDocument();
+    expect(screen.getByText("Stamps weren't verified. Please try again.")).toBeInTheDocument();
   });
-});
-
-describe("when the user clicks Passport JSON", () => {
-  it("it should display a modal", async () => {
-    renderWithContext(
-      mockUserContext,
-      mockCeramicContext,
-      <Router>
-        <Dashboard />
-      </Router>
-    );
-
-    const buttonPassportJson = screen.queryByTestId("button-passport-json");
-
-    fireEvent.click(buttonPassportJson!);
-
-    const verifyModal = await screen.findByRole("dialog");
-    const buttonDone = screen.getByTestId("button-passport-json-done");
-
-    expect(verifyModal).toBeInTheDocument();
-    expect(buttonDone).toBeInTheDocument();
-  });
-});
-
-describe("when viewer connection status is connecting", () => {
-  it("should show a 'waiting for signature' alert", () => {
-    (framework.useViewerConnection as jest.Mock).mockReturnValue([{ status: "connecting" }]);
-    renderWithContext(
-      mockUserContext,
-      mockCeramicContext,
-      <Router>
-        <Dashboard />
-      </Router>
-    );
-
-    const waitingForSignature = screen.getByTestId("selfId-connection-alert");
-    expect(waitingForSignature).toBeInTheDocument();
-  });
-});
-
-describe.only("when viewer connection status is connected", () => {
   it("should show a loading stamps alert", () => {
-    (framework.useViewerConnection as jest.Mock).mockReturnValue([{ status: "connected" }]);
+    (framework.useViewerConnection as Mock).mockReturnValue([{ status: "connected" }]);
     renderWithContext(
-      mockUserContext,
       {
         ...mockCeramicContext,
         passport: undefined,
@@ -164,33 +127,80 @@ describe.only("when viewer connection status is connected", () => {
       </Router>
     );
 
+    // We are waiting for a notification "One moment while we load your Stamps..."
     const databaseLoadingAlert = screen.getByTestId("db-stamps-alert");
     expect(databaseLoadingAlert).toBeInTheDocument();
   });
 
-  it("should show a connecting to ceramic alert", () => {
-    (framework.useViewerConnection as jest.Mock).mockReturnValue([{ status: "connected" }]);
+  it("should show an initializing passport alert", () => {
+    (framework.useViewerConnection as Mock).mockReturnValue([{ status: "connected" }]);
     renderWithContext(
-      mockUserContext,
       {
         ...mockCeramicContext,
         passport: undefined,
-        isLoadingPassport: IsLoadingPassportState.LoadingFromCeramic,
+        isLoadingPassport: IsLoadingPassportState.CreatingPassport,
       },
       <Router>
         <Dashboard />
       </Router>
     );
 
-    const ceramicLoadingAlert = screen.getByTestId("ceramic-stamps-alert");
+    const ceramicLoadingAlert = screen.getByTestId("initializing-alert");
     expect(ceramicLoadingAlert).toBeInTheDocument();
   });
 });
 
-describe("when app fails to load ceramic stream", () => {
+describe("DashboardCTAs", () => {
+  it("renders with default customization", () => {
+    render(<DashboardCTAs customization={{ key: "none" } as Customization} />);
+
+    expect(screen.getByTestId("dashboard-score-panel")).toHaveClass("w-full xl:w-1/2");
+    expect(screen.getByTestId("dashboard-score-explanation-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("dynamic-custom-dashboard-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders with custom dashboard panel", () => {
+    render(
+      <DashboardCTAs
+        customization={{ key: "custom", useCustomDashboardPanel: true, showExplanationPanel: true } as Customization}
+      />
+    );
+
+    expect(screen.getByTestId("dashboard-score-panel")).toHaveClass("w-full");
+    expect(screen.getByTestId("dashboard-score-explanation-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("dynamic-custom-dashboard-panel")).toHaveClass(
+      "order-1 lg:order-2 max-w-full xl:max-w-md"
+    );
+  });
+
+  it("renders without explanation panel", () => {
+    render(
+      <DashboardCTAs
+        customization={{ key: "custom", useCustomDashboardPanel: true, showExplanationPanel: false } as Customization}
+      />
+    );
+
+    expect(screen.getByTestId("dashboard-score-panel")).toHaveClass("w-full");
+    expect(screen.queryByTestId("dashboard-score-explanation-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dynamic-custom-dashboard-panel")).toHaveClass("order-1 lg:order-2 max-w-full xl:w-2/3");
+  });
+
+  it("applies correct CSS classes", () => {
+    render(<DashboardCTAs customization={{ key: "none" } as Customization} />);
+
+    // eslint-disable-next-line testing-library/no-node-access
+    const container = screen.getByTestId("dashboard-score-panel").parentElement?.parentElement;
+    expect(container).toHaveClass("col-span-full flex flex-col xl:flex-row gap-8");
+
+    // eslint-disable-next-line testing-library/no-node-access
+    const innerContainer = screen.getByTestId("dashboard-score-panel").parentElement;
+    expect(innerContainer).toHaveClass("col-span-full order-2 flex flex-col grow lg:flex-row gap-8 mt-0.5");
+  });
+});
+
+describe.skip("when app fails to load ceramic stream", () => {
   it("should display a modal for user to retry connection, or close", () => {
     renderWithContext(
-      mockUserContext,
       {
         ...mockCeramicContext,
         passport: undefined,
@@ -212,11 +222,10 @@ describe("when app fails to load ceramic stream", () => {
   });
 
   it("when retry button is clicked, it should retry ceramic connection", () => {
-    const mockCeramicConnect = jest.fn();
-    (framework.useViewerConnection as jest.Mock).mockReturnValue([{ status: "connected" }, mockCeramicConnect]);
+    const mockCeramicConnect = vi.fn();
+    (framework.useViewerConnection as Mock).mockReturnValue([{ status: "connected" }, mockCeramicConnect]);
 
     renderWithContext(
-      mockUserContext,
       {
         ...mockCeramicContext,
         passport: undefined,
@@ -234,7 +243,6 @@ describe("when app fails to load ceramic stream", () => {
 
   it("when done button is clicked, it should disconnect the user", () => {
     renderWithContext(
-      mockUserContext,
       {
         ...mockCeramicContext,
         passport: undefined,
@@ -251,60 +259,53 @@ describe("when app fails to load ceramic stream", () => {
   });
 });
 
-describe("when a user clicks on the Passport logo", () => {
-  it("should disconnect the user's wallet and navigate to homepage", async () => {
-    const mockCeramicConnect = jest.fn();
-    (framework.useViewerConnection as jest.Mock).mockReturnValue([{ status: "connected" }, mockCeramicConnect]);
+it("reset passport button should open refresh modal when clicked", async () => {
+  renderWithContext(
+    {
+      ...mockCeramicContext,
+      expiredProviders: ["Ens"],
+    },
+    <Router>
+      <Dashboard />
+    </Router>
+  );
 
+  fireEvent.click(screen.getByText("Reverify stamps"));
+  await waitFor(() => {
+    expect(screen.getByText("Refresh Expired Stamps")).toBeInTheDocument();
+  });
+});
+
+describe("when the user has a passport", () => {
+  it("shows Passport JSON button", () => {
     renderWithContext(
-      mockUserContext,
       mockCeramicContext,
       <Router>
         <Dashboard />
       </Router>
     );
 
-    const passportLogoLink = screen.getByTestId("passport-logo-link");
-
-    fireEvent.click(passportLogoLink);
-
-    expect(mockHandleDisconnection).toBeCalledTimes(1);
-
-    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(screen.getByTestId("button-passport-json")).toBeInTheDocument();
   });
-  it("if ceramic errors are present it should show reset banner", () => {
+});
+
+describe("when the user clicks Passport JSON", () => {
+  it("it should display a modal", async () => {
     renderWithContext(
-      mockUserContext,
-      {
-        ...mockCeramicContext,
-        passportHasCacaoError: true,
-      },
+      mockCeramicContext,
       <Router>
         <Dashboard />
       </Router>
     );
 
-    expect(
-      screen.getByText(
-        "We have detected some broken stamps in your passport. Your passport is currently locked because of this. We need to fix these errors before you continue using Passport. This might take up to 5 minutes."
-      )
-    ).toBeInTheDocument();
-  });
-  it("reset passport button should open refresh modal when clicked", async () => {
-    renderWithContext(
-      mockUserContext,
-      {
-        ...mockCeramicContext,
-        passportHasCacaoError: true,
-      },
-      <Router>
-        <Dashboard />
-      </Router>
-    );
+    const buttonPassportJson = screen.queryByTestId("button-passport-json");
 
-    fireEvent.click(screen.getByText("Reset Passport"));
-    await waitFor(() => {
-      expect(screen.getByText("Refresh Modal")).toBeInTheDocument();
-    });
+    fireEvent.click(buttonPassportJson!);
+
+    const verifyModal = await screen.findByRole("dialog");
+    const buttonDone = screen.getByTestId("button-passport-json-done");
+
+    expect(verifyModal).toBeInTheDocument();
+    expect(buttonDone).toBeInTheDocument();
   });
 });

@@ -1,22 +1,16 @@
-import React, { useRef } from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { vi, describe, it, expect } from "vitest";
+import React from "react";
+import { screen } from "@testing-library/react";
 
 import { SideBarContent, SideBarContentProps } from "../../components/SideBarContent";
 
-import {
-  makeTestCeramicContext,
-  makeTestUserContext,
-  renderWithContext,
-} from "../../__test-fixtures__/contextTestHelpers";
+import { makeTestCeramicContext, renderWithContext } from "../../__test-fixtures__/contextTestHelpers";
 
-import { UserContextState } from "../../context/userContext";
 import { CeramicContextState } from "../../context/ceramicContext";
 import { Drawer, DrawerOverlay } from "@chakra-ui/react";
 import { PROVIDER_ID } from "@gitcoin/passport-types";
 
-jest.mock("../../utils/onboard.ts");
-
-jest.mock("next/router", () => ({
+vi.mock("next/router", () => ({
   useRouter: () => ({
     query: { filter: "" },
   }),
@@ -32,6 +26,7 @@ const props: SideBarContentProps = {
     name: "Github",
     description: "Connect your existing Github account to verify.",
     connectMessage: "Connect Account",
+    website: "https://github.com",
   },
   currentProviders: [
     { platformGroup: "Account Name", providers: [{ title: "Encrypted", name: "Github" }] },
@@ -58,7 +53,6 @@ const props: SideBarContentProps = {
   verifyButton: undefined,
 };
 
-const mockUserContext: UserContextState = makeTestUserContext();
 const mockCeramicContext: CeramicContextState = makeTestCeramicContext();
 
 describe("SideBarContent", () => {
@@ -69,32 +63,32 @@ describe("SideBarContent", () => {
         <SideBarContent {...props} />
       </Drawer>
     );
-    renderWithContext(mockUserContext, mockCeramicContext, drawer());
+    renderWithContext(mockCeramicContext, drawer());
     expect(screen.getByText("Github")).toBeInTheDocument();
   });
 
-  it("should mark verified providers with green circle", () => {
+  it("should mark verified providers with green text", () => {
     const drawer = () => (
       <Drawer isOpen={true} placement="right" size="sm" onClose={() => {}}>
         <DrawerOverlay />
         <SideBarContent {...props} />
       </Drawer>
     );
-    renderWithContext(mockUserContext, mockCeramicContext, drawer());
+    renderWithContext(mockCeramicContext, drawer());
 
     verifiedProviders.forEach((provider) => {
-      expect(screen.getByTestId(`indicator-${provider}`)).toHaveClass("text-accent");
+      expect(screen.getByTestId(`indicator-${provider}`)).toHaveClass("border-foreground-2");
     });
   });
 
-  it("should mark non verified providers with grey circle", () => {
+  it("should mark non verified providers with dull border", () => {
     const drawer = () => (
       <Drawer isOpen={true} placement="right" size="sm" onClose={() => {}}>
         <DrawerOverlay />
         <SideBarContent {...props} />
       </Drawer>
     );
-    renderWithContext(mockUserContext, mockCeramicContext, drawer());
+    renderWithContext(mockCeramicContext, drawer());
 
     const allProviders = props.currentProviders
       ?.map((provider) => provider.providers)
@@ -106,27 +100,7 @@ describe("SideBarContent", () => {
     );
 
     nonVerifiedProviders?.forEach((provider) => {
-      expect(screen.getByTestId(`indicator-${provider}`)).toHaveClass("text-color-4");
-    });
-  });
-
-  it("should set switches as checked", () => {
-    const drawer = () => (
-      <Drawer isOpen={true} placement="right" size="sm" onClose={() => {}}>
-        <DrawerOverlay />
-        <SideBarContent {...props} />
-      </Drawer>
-    );
-    renderWithContext(mockUserContext, mockCeramicContext, drawer());
-
-    props.currentProviders?.forEach((stamp) => {
-      stamp.providers.forEach((provider, i) => {
-        if (verifiedProviders.includes(provider.name as PROVIDER_ID)) {
-          expect(screen.getByTestId(`switch-${i}`)).toHaveAttribute("data-checked");
-        } else {
-          expect(screen.getByTestId(`switch-${i}`).attributes).not.toContain("data-checked");
-        }
-      });
+      expect(screen.getByTestId(`indicator-${provider}`)).toHaveClass("border-color-3");
     });
   });
 });

@@ -5,16 +5,19 @@
     "esModuleInterop": true,
     "declaration": true,
     "allowSyntheticDefaultImports": true,
-    "target": "es6",
+    "target": "ES2022",
     "noImplicitAny": true,
     "moduleResolution": "node",
     "sourceMap": true,
     "outDir": "dist/commonjs",
     "allowJs": true,
     "baseUrl": "src",
-    "paths": {
-      "*": ["../node_modules/*", "node_modules/*"]
-    }
+    "skipLibCheck": true,
+    "resolveJsonModule": true
   },
-  "include": ["src/*", "src/didkit-node/*", "__tests__"]
+  "include": [
+    "src/**/*",
+    "src/deployments/*.json",
+    "src/deployments/abi/*.json"
+  ]
 }

@@ -1,154 +1,166 @@
-import crypto from "crypto";
-import { auth, Client } from "twitter-api-sdk";
+import {
+  TwitterApi,
+  TwitterApiReadOnly,
+  ApiRequestError,
+  ApiResponseError,
+  ApiPartialResponseError,
+} from "twitter-api-v2";
 
-/*
-  Procedure to generate auth URL & request access token for Twitter OAuth
+import { clearCacheSession, initCacheSession, loadCacheSession, PlatformSession } from "../../utils/platform-cache";
+import { ProviderContext } from "@gitcoin/passport-types";
+import { ProviderExternalVerificationError, ProviderInternalVerificationError } from "../../types";
 
-  We MUST use the same instance/object of OAuth2User during generateAuthUrl AND requestAccessToken (bearer token) processes.
-  This is because there are private values (code_challenge, code_verifier) that are
-    set in the OAuth2User instance when generateAuthUrl action is performed -- these private values are used
-    during the requestAccessToken process.
-*/
-
-const TIMEOUT_IN_MS = 60000; // 60000ms = 60s
-const TIMEOUT_AUTHED_IN_MS = 10000; // 10000ms = 10s
-
-// Map <SessionKey, auth.OAuth2User>
-export const clients: Record<string, auth.OAuth2User> = {};
-export const authedClients: Record<string, Client> = {};
-
-export const getSessionKey = (): string => {
-  return `twitter-${crypto.randomBytes(32).toString("hex")}`;
+export type TwitterContext = ProviderContext & {
+  twitter?: {
+    client?: TwitterApiReadOnly;
+    userData?: TwitterUserData;
+  };
 };
+
+type TwitterCache = {
+  codeVerifier?: string;
+  callback?: string;
+};
+
+export type TwitterUserData = {
+  username?: string;
+  createdAt?: string;
+  id?: string;
+};
+
+export const loadTwitterCache = async (token: string): Promise<PlatformSession<TwitterCache>> => {
+  try {
+    return await loadCacheSession(token);
+  } catch (e) {
+    throw new ProviderInternalVerificationError("Session missing or expired, try again");
+  }
+};
+
 /**
  * Initializes a Twitter OAuth2 Authentication Client
- * @param callback redirect URI to use. Don’t use localhost as a callback URL - instead, please use a custom host locally or http(s)://127.0.0.1
- * @param sessionKey associates a specific auth.OAuth2User instance to a session
- * @returns instance of auth.OAuth2User
  */
-export const initClient = (callback: string, sessionKey: string): auth.OAuth2User => {
+export const initClientAndGetAuthUrl = async (callbackOverride?: string): Promise<string> => {
   if (process.env.TWITTER_CLIENT_ID && process.env.TWITTER_CLIENT_SECRET) {
-    clients[sessionKey] = new auth.OAuth2User({
-      client_id: process.env.TWITTER_CLIENT_ID,
-      client_secret: process.env.TWITTER_CLIENT_SECRET,
-      callback: callback,
-      scopes: ["tweet.read", "users.read"],
+    const callback = callbackOverride || process.env.TWITTER_CALLBACK;
+    const client = new TwitterApi({
+      clientId: process.env.TWITTER_CLIENT_ID,
+      clientSecret: process.env.TWITTER_CLIENT_SECRET,
+    }).readOnly;
+
+    const { url, codeVerifier, state } = client.generateOAuth2AuthLink(callback, {
+      scope: ["tweet.read", "users.read"],
     });
 
-    // stope the clients from causing a memory leak
-    setTimeout(() => {
-      deleteClient(sessionKey);
-    }, TIMEOUT_IN_MS);
+    // This is necessary because of how we use the state to
+    // direct the oauth window to the correct message channel
+    const newState = "twitter-" + state;
+    const newUrl = url.replace(state, newState);
 
-    return clients[sessionKey];
+    await initCacheSession(newState);
+    const session = await loadTwitterCache(newState);
+
+    await session.set("codeVerifier", codeVerifier);
+    await session.set("callback", callback);
+
+    return newUrl;
   } else {
     throw "Missing TWITTER_CLIENT_ID or TWITTER_CLIENT_SECRET";
   }
 };
 
-// record timeouts so that we can delay the deletion of the auth key til after all Providers have used it
-const timeoutDel: { [key: string]: NodeJS.Timeout } = {};
-const timeoutAuthDel: { [key: string]: NodeJS.Timeout } = {};
+// retrieve the instantiated Client shared between Providers
+export const getAuthClient = async (
+  sessionKey: string,
+  code: string,
+  context: TwitterContext
+): Promise<TwitterApiReadOnly> => {
+  if (!context.twitter?.client) {
+    const session = await loadTwitterCache(sessionKey);
+    const codeVerifier = session.get("codeVerifier");
+    const callback = session.get("callback");
 
-export const deleteClient = (state: string): void => {
-  timeoutDel[state] = setTimeout(() => {
-    delete clients[state];
-    delete timeoutDel[state];
-  }, TIMEOUT_AUTHED_IN_MS);
-};
+    if (!codeVerifier || !sessionKey || !code) {
+      throw new ProviderExternalVerificationError("You denied the app or your session expired! Please try again.");
+    }
 
-const deleteAuthClient = (code: string): void => {
-  timeoutAuthDel[code] = setTimeout(() => {
-    delete authedClients[code];
-    delete timeoutAuthDel[code];
-  }, TIMEOUT_AUTHED_IN_MS);
-};
+    const client = await loginUser(code, codeVerifier, callback);
 
-// retrieve the raw client that is shared between Proceedures
-export const getClient = (state: string): auth.OAuth2User => {
-  clearTimeout(timeoutDel[state]);
-  const ret: auth.OAuth2User = clients[state];
-  if (ret !== undefined) {
-    return ret;
+    if (!context.twitter) context.twitter = {};
+    context.twitter.client = client;
+
+    await clearCacheSession(sessionKey);
   }
-  throw "Unable to get twitter client";
+  return context.twitter.client;
 };
 
-// retrieve the instatiated Client shared between Providers
-const getAuthClient = async (client: auth.OAuth2User, code: string): Promise<Client> => {
-  // clear any previous attempt (it's okay if timeoutAuthDel[code] is undefined)
-  clearTimeout(timeoutAuthDel[code]);
-  // if the client has not already been created...
-  if (!authedClients[code]) {
-    // retrieve user's auth bearer token to authenticate client
-    await client.requestAccessToken(code);
-    // associate and store the authedClients[code]
-    authedClients[code] = new Client(client);
+const loginUser = async (code: string, codeVerifier: string, callback: string): Promise<TwitterApiReadOnly> => {
+  const authClient = new TwitterApi({
+    clientId: process.env.TWITTER_CLIENT_ID,
+    clientSecret: process.env.TWITTER_CLIENT_SECRET,
+  }).readOnly;
+
+  try {
+    const { client } = await authClient.loginWithOAuth2({
+      code,
+      codeVerifier,
+      redirectUri: callback,
+    });
+
+    return client.readOnly;
+  } catch (error) {
+    handleTwitterSdkRequestError("auth", error);
+  }
+};
+
+export const getTwitterUserData = async (
+  context: TwitterContext,
+  twitterClient: TwitterApiReadOnly
+): Promise<TwitterUserData> => {
+  if (!context.twitter.userData) {
+    try {
+      // return information about the (authenticated) requesting user
+      const user = await twitterClient.v2.me({
+        "user.fields": ["created_at"],
+      });
+
+      if (!context.twitter) context.twitter = {};
+      if (!context.twitter.userData) context.twitter.userData = {};
+
+      context.twitter.userData.createdAt = user.data.created_at;
+      context.twitter.userData.id = user.data.id;
+      context.twitter.userData.username = user.data.username;
+    } catch (error) {
+      handleTwitterSdkRequestError("user", error);
+    }
+  }
+  return context.twitter.userData;
+};
+
+const handleTwitterSdkRequestError = (dataLabel: string, error: any): void => {
+  if (error instanceof ApiRequestError) {
+    const { requestError } = error;
+    throw new ProviderExternalVerificationError(
+      `Error requesting ${dataLabel} data: ${requestError.name} ${requestError.message}`
+    );
   }
 
-  // delete the authed client in 10s (long enough for all Providers to use the same client in a single request)
-  deleteAuthClient(code);
+  if (error instanceof ApiResponseError) {
+    const { data, code } = error;
+    let dataString = "";
+    try {
+      dataString = JSON.stringify(data);
+    } catch {}
+    throw new ProviderExternalVerificationError(
+      `Error retrieving ${dataLabel} data, code ${code}, data: ${dataString}`
+    );
+  }
 
-  // return the Client instance
-  return authedClients[code];
-};
+  if (error instanceof ApiPartialResponseError) {
+    const { rawContent, responseError } = error;
+    throw new ProviderExternalVerificationError(
+      `Retrieving Twitter ${dataLabel} data failed to complete, error: ${responseError.name} ${responseError.message}, raw data: ${rawContent}`
+    );
+  }
 
-// This method has side-effects which alter unaccessible state on the
-//   OAuth2User instance. The correct state values need to be present when we request the access token
-export const generateAuthURL = (client: auth.OAuth2User, state: string): string => {
-  return client.generateAuthURL({
-    state,
-    code_challenge_method: "s256",
-  });
-};
-
-export type TwitterFindMyUserResponse = {
-  id?: string;
-  name?: string;
-  username?: string;
-};
-
-export const requestFindMyUser = async (client: auth.OAuth2User, code: string): Promise<TwitterFindMyUserResponse> => {
-  // return information about the (authenticated) requesting user
-  const twitterClient = await getAuthClient(client, code);
-  const myUser = await twitterClient.users.findMyUser();
-  return { ...myUser.data };
-};
-
-export type TwitterFollowerResponse = {
-  username?: string;
-  followerCount?: number;
-};
-
-export const getFollowerCount = async (client: auth.OAuth2User, code: string): Promise<TwitterFollowerResponse> => {
-  // retrieve user's auth bearer token to authenticate client
-  const twitterClient = await getAuthClient(client, code);
-
-  // public metrics returns more data on user
-  const myUser = await twitterClient.users.findMyUser({
-    "user.fields": ["public_metrics"],
-  });
-  return {
-    username: myUser.data?.username,
-    followerCount: myUser.data?.public_metrics?.followers_count,
-  };
-};
-
-export type TwitterTweetResponse = {
-  username?: string;
-  tweetCount?: number;
-};
-
-export const getTweetCount = async (client: auth.OAuth2User, code: string): Promise<TwitterTweetResponse> => {
-  // retrieve user's auth bearer token to authenticate client
-  const twitterClient = await getAuthClient(client, code);
-
-  // public metrics returns more data on user
-  const myUser = await twitterClient.users.findMyUser({
-    "user.fields": ["public_metrics"],
-  });
-  return {
-    username: myUser.data?.username,
-    tweetCount: myUser.data?.public_metrics?.tweet_count,
-  };
+  throw error;
 };
